@@ -1,6 +1,6 @@
 {
-  "name": "@nodelogger/core",
-  "version": "0.1.0",
+  "name": "@johnboxcodes/boxlogger",
+  "version": "0.2.0",
   "description": "Lightweight, Sentry-compatible backend logger with pluggable storage providers (SQLite, Memory) for Node.js",
   "author": "johnbox codes",
   "license": "MIT",
@@ -10,12 +10,12 @@
   "types": "dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/johnboxcodes/nodelogger.git"
+    "url": "git+https://github.com/johnboxcodes/boxlogger.git"
   },
   "bugs": {
-    "url": "https://github.com/johnboxcodes/nodelogger/issues"
+    "url": "https://github.com/johnboxcodes/boxlogger/issues"
   },
-  "homepage": "https://github.com/johnboxcodes/nodelogger#readme",
+  "homepage": "https://github.com/johnboxcodes/boxlogger#readme",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -28,6 +28,10 @@
     "./memory": {
       "import": "./dist/stores/memory.js",
       "types": "./dist/stores/memory.d.ts"
+    },
+    "./console": {
+      "import": "./dist/stores/console.js",
+      "types": "./dist/stores/console.d.ts"
     }
   },
   "files": [
