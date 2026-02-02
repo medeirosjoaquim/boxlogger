@@ -459,10 +459,7 @@ describe('Sentry SDK Comparison', () => {
       expect(() => RealSentry.captureException(undefined)).not.toThrow();
     });
 
-    it.skip('NodeLogger requires proper error objects (stricter than Sentry)', () => {
-      // NOTE: NodeLogger currently throws when passed null/undefined
-      // This is a known behavior difference - NodeLogger is stricter
-      // TODO: Consider making this more lenient to match Sentry behavior
+    it('NodeLogger handles null/undefined gracefully like Sentry', () => {
       expect(() => NodeLogger.captureException(null)).not.toThrow();
       expect(() => NodeLogger.captureException(undefined)).not.toThrow();
     });

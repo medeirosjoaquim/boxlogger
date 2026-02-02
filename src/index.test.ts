@@ -29,8 +29,9 @@ describe('Index Module - Full Coverage', () => {
       expect(Sentry.isInitialized()).toBe(true);
     });
 
-    it('should throw for mongodb provider (not implemented)', async () => {
-      await expect(Sentry.init('mongodb')).rejects.toThrow('MongoDB provider not yet implemented');
+    it('should initialize with console provider', async () => {
+      await Sentry.init('console');
+      expect(Sentry.isInitialized()).toBe(true);
     });
 
     it('should initialize with sqlite provider', async () => {
@@ -112,8 +113,10 @@ describe('Index Module - Full Coverage', () => {
       await logger.close();
     });
 
-    it('should throw for mongodb provider (not implemented)', async () => {
-      await expect(Sentry.create('mongodb')).rejects.toThrow('MongoDB provider not yet implemented');
+    it('should create with console provider', async () => {
+      const logger = await Sentry.create('console');
+      expect(logger).toBeDefined();
+      await logger.close();
     });
 
     it('should create with sqlite provider', async () => {
