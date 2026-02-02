@@ -1,0 +1,84 @@
+{
+  "name": "@nodelogger/core",
+  "version": "0.1.0",
+  "description": "Lightweight, Sentry-compatible backend logger with pluggable storage providers (SQLite, Memory) for Node.js",
+  "author": "johnbox codes",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johnboxcodes/nodelogger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/johnboxcodes/nodelogger/issues"
+  },
+  "homepage": "https://github.com/johnboxcodes/nodelogger#readme",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./sqlite": {
+      "import": "./dist/stores/sqlite.js",
+      "types": "./dist/stores/sqlite.d.ts"
+    },
+    "./memory": {
+      "import": "./dist/stores/memory.js",
+      "types": "./dist/stores/memory.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
+    "test:vitest": "vitest run",
+    "docs": "typedoc --out docs src/index.ts",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@sentry/node": "^10.38.0",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.10.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "typedoc": "^0.27.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "logger",
+    "logging",
+    "backend",
+    "sqlite",
+    "storage",
+    "nodejs",
+    "sentry",
+    "sentry-compatible",
+    "error-tracking",
+    "monitoring",
+    "observability",
+    "breadcrumbs",
+    "sessions",
+    "transactions"
+  ]
+}

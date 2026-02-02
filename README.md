@@ -1,0 +1,248 @@
+# @nodelogger/core
+
+A lightweight, Sentry-compatible backend logger with pluggable storage providers for Node.js applications.
+
+## Features
+
+- 🔌 **Pluggable Storage** - SQLite, Memory, or custom providers
+- 🎯 **Sentry-Compatible API** - Drop-in replacement for common Sentry functions
+- 📊 **Session Tracking** - Track user sessions with crash detection
+- 🔍 **Transaction Support** - Performance monitoring with custom measurements
+- 🍞 **Breadcrumbs** - Event trail for debugging
+- 🏷️ **Scoped Context** - Isolated logging contexts with tags and metadata
+- 💾 **Persistent Storage** - SQLite backend for production use
+- 🧪 **Fully Tested** - Comprehensive test coverage
+
+## Installation
+
+```bash
+npm install @nodelogger/core
+```
+
+For SQLite support:
+```bash
+npm install @nodelogger/core better-sqlite3
+```
+
+## Quick Start
+
+```typescript
+import * as Sentry from '@nodelogger/core';
+
+// Initialize with SQLite
+await Sentry.init('sqlite', { 
+  filename: './logs.db',
+  service: 'my-api',
+  environment: 'production'
+});
+
+// Capture errors
+try {
+  await riskyOperation();
+} catch (error) {
+  Sentry.captureException(error, {
+    tags: { section: 'payment' },
+    extra: { userId: '123' }
+  });
+}
+
+// Log messages
+Sentry.captureMessage('Payment processed', 'info');
+
+// Set user context
+Sentry.setUser({ id: '123', email: 'user@example.com' });
+
+// Add breadcrumbs
+Sentry.addBreadcrumb({
+  category: 'navigation',
+  message: 'User navigated to checkout',
+  level: 'info'
+});
+```
+
+## Storage Providers
+
+### SQLite (Recommended for Production)
+
+```typescript
+import * as Sentry from '@nodelogger/core';
+
+await Sentry.init('sqlite', {
+  filename: './logs.db',
+  service: 'my-service',
+  environment: 'production',
+  minLevel: 'info'
+});
+```
+
+### Memory (Development/Testing)
+
+```typescript
+await Sentry.init('memory', {
+  service: 'my-service',
+  environment: 'development',
+  minLevel: 'debug'
+});
+```
+
+### Custom Provider
+
+```typescript
+import { create } from '@nodelogger/core';
+import { MyCustomStore } from './my-store';
+
+const logger = await create(new MyCustomStore(), {
+  service: 'my-service'
+});
+```
+
+## API Reference
+
+### Core Functions
+
+#### `init(provider, options)`
+Initialize the logger with a storage provider.
+
+```typescript
+await Sentry.init('sqlite', {
+  filename: './logs.db',
+  service: 'my-api',
+  environment: 'production',
+  release: '1.0.0',
+  minLevel: 'info',
+  ignoreErrors: [/NetworkError/],
+  sampleRate: 1.0,
+  beforeSend: (event) => event
+});
+```
+
+#### `captureException(error, context?)`
+Capture and log exceptions with optional context.
+
+```typescript
+Sentry.captureException(error, {
+  tags: { section: 'api' },
+  extra: { endpoint: '/users' },
+  level: 'error',
+  user: { id: '123' }
+});
+```
+
+#### `captureMessage(message, level?)`
+Log custom messages.
+
+```typescript
+Sentry.captureMessage('User action completed', 'info');
+Sentry.captureMessage('Warning: High memory usage', {
+  level: 'warning',
+  tags: { component: 'memory-monitor' }
+});
+```
+
+#### `setUser(user)`
+Set user context for all subsequent logs.
+
+```typescript
+Sentry.setUser({
+  id: '123',
+  email: 'user@example.com',
+  username: 'john_doe',
+  ip_address: '{{auto}}'
+});
+```
+
+#### `addBreadcrumb(breadcrumb)`
+Add breadcrumb for event trail.
+
+```typescript
+Sentry.addBreadcrumb({
+  category: 'http',
+  message: 'API request',
+  level: 'info',
+  data: { url: '/api/users', method: 'GET' }
+});
+```
+
+#### `withScope(callback)`
+Execute code with isolated logging context.
+
+```typescript
+Sentry.withScope((scope) => {
+  scope.setTag('transaction', 'payment');
+  scope.setExtra('orderId', '12345');
+  Sentry.captureException(error);
+});
+```
+
+### Session Management
+
+```typescript
+// Start session
+await Sentry.startSession({ user: { id: '123' } });
+
+// End session
+await Sentry.endSession('ended');
+
+// Get current session
+const session = Sentry.getCurrentSession();
+```
+
+### Transaction Tracking
+
+```typescript
+const transaction = Sentry.startTransaction({
+  name: 'payment-processing',
+  op: 'payment'
+});
+
+transaction.setTag('payment-method', 'credit-card');
+transaction.setMeasurement('amount', 99.99, 'usd');
+transaction.setStatus('ok');
+transaction.finish();
+```
+
+### Query Logs
+
+```typescript
+// Get logs with filters
+const logs = await Sentry.getLogs({
+  level: 'error',
+  startTime: new Date('2024-01-01'),
+  limit: 100
+});
+
+// Get sessions
+const sessions = await Sentry.getSessions({
+  status: 'crashed'
+});
+
+// Get statistics
+const stats = await Sentry.getStats();
+```
+
+## Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `service` | `string` | - | Service name |
+| `environment` | `string` | `'production'` | Environment (production, development, etc.) |
+| `release` | `string` | - | Release version |
+| `minLevel` | `LogLevel` | `'info'` | Minimum log level |
+| `ignoreErrors` | `(string\|RegExp)[]` | `[]` | Errors to ignore |
+| `sampleRate` | `number` | `1.0` | Error sampling rate (0-1) |
+| `messagesSampleRate` | `number` | `1.0` | Message sampling rate (0-1) |
+| `beforeSend` | `function` | - | Hook to modify/filter events |
+| `beforeSendMessage` | `function` | - | Hook to modify/filter messages |
+
+## Examples
+
+See the [examples](./examples) directory for complete examples:
+- [examples/server.ts](./examples/server.ts) - Express server with error tracking
+
+## License
+
+MIT
+
+## Author
+
+johnbox codes

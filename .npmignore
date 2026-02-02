@@ -1,0 +1,28 @@
+# Test files
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+__tests__/
+
+# Coverage
+coverage/
+
+# Examples
+examples/
+
+# Config files
+jest.config.js
+vitest.config.ts
+tsconfig.json
+typedoc.json
+
+# Source files (only ship dist)
+src/
+
+# Development
+.claude/
+.kiro/
+
+# Logs
+*.log
