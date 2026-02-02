@@ -1,33 +1,34 @@
-# @nodelogger/core
+# boxlogger
 
 A lightweight, Sentry-compatible backend logger with pluggable storage providers for Node.js applications.
 
 ## Features
 
-- 🔌 **Pluggable Storage** - SQLite, Memory, or custom providers
-- 🎯 **Sentry-Compatible API** - Drop-in replacement for common Sentry functions
-- 📊 **Session Tracking** - Track user sessions with crash detection
-- 🔍 **Transaction Support** - Performance monitoring with custom measurements
-- 🍞 **Breadcrumbs** - Event trail for debugging
-- 🏷️ **Scoped Context** - Isolated logging contexts with tags and metadata
-- 💾 **Persistent Storage** - SQLite backend for production use
-- 🧪 **Fully Tested** - Comprehensive test coverage
+- **Pluggable Storage** - SQLite, Memory, Console, or custom providers
+- **Sentry-Compatible API** - Drop-in replacement for common Sentry functions
+- **Browser Compatible** - Console and Memory providers work in Next.js client components
+- **Session Tracking** - Track user sessions with crash detection
+- **Transaction Support** - Performance monitoring with custom measurements
+- **Breadcrumbs** - Event trail for debugging
+- **Scoped Context** - Isolated logging contexts with tags and metadata
+- **Persistent Storage** - SQLite backend for production use
+- **Fully Tested** - Comprehensive test coverage
 
 ## Installation
 
 ```bash
-npm install @nodelogger/core
+npm install @johnboxcodes/boxlogger
 ```
 
 For SQLite support:
 ```bash
-npm install @nodelogger/core better-sqlite3
+npm install @johnboxcodes/boxlogger better-sqlite3
 ```
 
 ## Quick Start
 
 ```typescript
-import * as Sentry from '@nodelogger/core';
+import * as Sentry from '@johnboxcodes/boxlogger';
 
 // Initialize with SQLite
 await Sentry.init('sqlite', { 
@@ -65,7 +66,7 @@ Sentry.addBreadcrumb({
 ### SQLite (Recommended for Production)
 
 ```typescript
-import * as Sentry from '@nodelogger/core';
+import * as Sentry from '@johnboxcodes/boxlogger';
 
 await Sentry.init('sqlite', {
   filename: './logs.db',
@@ -75,7 +76,19 @@ await Sentry.init('sqlite', {
 });
 ```
 
-### Memory (Development/Testing)
+### Console (Development/Debugging)
+
+Logs everything to console with beautiful colorful formatting. Perfect for development and debugging.
+
+```typescript
+await Sentry.init('console', {
+  service: 'my-service',
+  environment: 'development',
+  minLevel: 'debug'
+});
+```
+
+### Memory (Testing)
 
 ```typescript
 await Sentry.init('memory', {
@@ -88,7 +101,7 @@ await Sentry.init('memory', {
 ### Custom Provider
 
 ```typescript
-import { create } from '@nodelogger/core';
+import { create } from 'boxlogger';
 import { MyCustomStore } from './my-store';
 
 const logger = await create(new MyCustomStore(), {
@@ -238,6 +251,28 @@ const stats = await Sentry.getStats();
 
 See the [examples](./examples) directory for complete examples:
 - [examples/server.ts](./examples/server.ts) - Express server with error tracking
+- [examples/console-demo.ts](./examples/console-demo.ts) - Console provider with colorful output
+- [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) - Next.js integration (server + client)
+
+## Next.js Integration
+
+The console and memory providers work in both Next.js server and client components!
+
+```typescript
+// Client component
+'use client';
+import * as Sentry from '@johnboxcodes/boxlogger';
+
+// Works in the browser!
+await Sentry.init('console', {
+  service: 'my-nextjs-app',
+  environment: 'development'
+});
+
+Sentry.captureException(error);
+```
+
+See [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) for complete examples.
 
 ## License
 
