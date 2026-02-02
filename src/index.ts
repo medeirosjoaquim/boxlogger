@@ -58,10 +58,25 @@
  * ```
  */
 
-import { randomUUID } from 'node:crypto';
+// Browser-compatible UUID generation
+function randomUUID(): string {
+  // Use native crypto.randomUUID if available (Node.js 16+ or modern browsers)
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  
+  // Fallback for older environments
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 import { Logger, createLogger } from './logger.js';
 import { MemoryStoreProvider } from './stores/memory.js';
 import { SQLiteStoreProvider, type SQLiteStoreConfig } from './stores/sqlite.js';
+import { ConsoleStoreProvider } from './stores/console.js';
 import {
   Scope,
   getCurrentScope,
@@ -117,7 +132,7 @@ let _activeTransaction: Transaction | null = null;
 /**
  * Provider type for quick initialization
  */
-export type ProviderType = 'sqlite' | 'memory' | 'mongodb';
+export type ProviderType = 'sqlite' | 'memory' | 'console';
 
 /**
  * Initialization options
@@ -125,8 +140,6 @@ export type ProviderType = 'sqlite' | 'memory' | 'mongodb';
 export interface InitOptions {
   /** SQLite database filename (for sqlite provider) */
   filename?: string;
-  /** MongoDB connection URI (for mongodb provider) */
-  uri?: string;
   /** Service/application name */
   service?: string;
   /** Environment (production, staging, development) */
@@ -156,7 +169,7 @@ export interface InitOptions {
 /**
  * Initialize the global logger singleton
  *
- * @param provider - Storage provider type ('sqlite', 'memory', 'mongodb')
+ * @param provider - Storage provider type ('sqlite', 'memory', 'console')
  * @param options - Configuration options
  *
  * @example
@@ -167,8 +180,8 @@ export interface InitOptions {
  * // Memory (development/testing)
  * await init('memory');
  *
- * // MongoDB (future)
- * await init('mongodb', { uri: 'mongodb://localhost/logs' });
+ * // Console (colorful output)
+ * await init('console');
  * ```
  */
 export async function init(
@@ -191,8 +204,9 @@ export async function init(
       });
       break;
 
-    case 'mongodb':
-      throw new Error('MongoDB provider not yet implemented');
+    case 'console':
+      _store = new ConsoleStoreProvider();
+      break;
 
     case 'memory':
     default:
@@ -206,7 +220,7 @@ export async function init(
   _instance = new Logger({
     store: _store,
     service: options.service,
-    environment: options.environment ?? process.env.NODE_ENV ?? 'development',
+    environment: options.environment ?? (typeof process !== 'undefined' ? process.env.NODE_ENV : undefined) ?? 'development',
     release: options.release,
     minLevel: options.minLevel ?? 'info',
     enableSessions: options.enableSessions ?? false,
@@ -251,8 +265,9 @@ export async function create(
       });
       break;
 
-    case 'mongodb':
-      throw new Error('MongoDB provider not yet implemented');
+    case 'console':
+      store = new ConsoleStoreProvider();
+      break;
 
     case 'memory':
     default:
@@ -265,7 +280,7 @@ export async function create(
   return new Logger({
     store,
     service: options.service,
-    environment: options.environment ?? process.env.NODE_ENV ?? 'development',
+    environment: options.environment ?? (typeof process !== 'undefined' ? process.env.NODE_ENV : undefined) ?? 'development',
     release: options.release,
     minLevel: options.minLevel ?? 'info',
     enableSessions: options.enableSessions ?? false,
@@ -351,6 +366,11 @@ export function captureException(
   captureContext?: CaptureContext
 ): string {
   ensureInitialized();
+
+  // Handle null/undefined gracefully like Sentry
+  if (error == null) {
+    return '';
+  }
 
   // Apply sampling - return empty string if event is dropped
   if (Math.random() >= _sampleRate) {

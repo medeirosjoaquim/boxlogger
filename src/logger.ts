@@ -7,8 +7,30 @@
  * @packageDocumentation
  */
 
-import { hostname } from 'node:os';
-import { randomUUID } from 'node:crypto';
+// Browser-compatible utilities
+function getHostname(): string {
+  if (typeof globalThis !== 'undefined' && 'location' in globalThis) {
+    return (globalThis as any).location?.hostname || 'browser';
+  }
+  try {
+    const os = require('node:os');
+    return os.hostname();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function randomUUID(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 import type {
   LoggerConfig,
   LogLevel,
@@ -77,7 +99,7 @@ export class Logger {
   };
   private currentSession: Session | null = null;
   private hostname: string;
-  private pid: number;
+  private pid?: number;
 
   /**
    * Create a new logger instance
@@ -90,12 +112,12 @@ export class Logger {
       name: config.name ?? 'default',
       minLevel: config.minLevel ?? 'info',
       service: config.service ?? undefined,
-      environment: config.environment ?? process.env.NODE_ENV ?? 'development',
+      environment: config.environment ?? (typeof process !== 'undefined' ? process.env.NODE_ENV : undefined) ?? 'development',
       enableSessions: config.enableSessions ?? false,
     };
 
-    this.hostname = hostname();
-    this.pid = process.pid;
+    this.hostname = getHostname();
+    this.pid = typeof process !== 'undefined' ? process.pid : undefined;
   }
 
   // =========================================================================
