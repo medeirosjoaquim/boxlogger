@@ -64,14 +64,14 @@ const LOG_LEVEL_VALUES: Record<LogLevel, number> = {
  * - Multiple log levels (fatal, error, warn, info, debug, trace)
  * - Session tracking
  * - Structured metadata (tags, user, request, error info)
- * - Pluggable storage backends (SQLite, MongoDB, Memory)
+ * - Pluggable storage backends (Console, Memory)
  *
  * @example
  * ```typescript
- * import { Logger } from '@nodelogger/core';
- * import { SQLiteStoreProvider } from '@nodelogger/core/sqlite';
+ * import { Logger } from '@johnboxcodes/boxlogger';
+ * import { ConsoleStoreProvider } from '@johnboxcodes/boxlogger/console';
  *
- * const store = new SQLiteStoreProvider({ filename: './logs.db' });
+ * const store = new ConsoleStoreProvider();
  * await store.init();
  *
  * const logger = new Logger({

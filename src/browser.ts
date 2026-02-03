@@ -34,4 +34,4 @@ export type {
 export type { MemoryStoreConfig } from './stores/memory.js';
 export type { ConsoleStoreConfig } from './stores/console.js';
 
-// Note: SQLiteStoreConfig is not exported to avoid importing sqlite module
+// Note: No SQLite provider - only console and memory

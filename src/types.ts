@@ -233,7 +233,7 @@ export interface StoreProviderConfig {
  * All methods are async to support both sync and async stores.
  */
 export interface StoreProvider {
-  /** Provider name (e.g., 'sqlite', 'mongodb', 'memory') */
+  /** Provider name (e.g., 'console', 'memory') */
   readonly name: string;
 
   /**

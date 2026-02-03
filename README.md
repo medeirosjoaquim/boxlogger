@@ -74,7 +74,6 @@ await Sentry.init('console', {
 ```typescript
 import * as Sentry from '@johnboxcodes/boxlogger';
 
-await Sentry.init('sqlite', {
   filename: './logs.db',
   service: 'my-service',
   environment: 'production',
@@ -111,7 +110,6 @@ const logger = await create(new MyCustomStore(), {
 Initialize the logger with a storage provider.
 
 ```typescript
-await Sentry.init('sqlite', {
   filename: './logs.db',
   service: 'my-api',
   environment: 'production',

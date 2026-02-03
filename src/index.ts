@@ -8,10 +8,10 @@
  *
  * @example Quick Start
  * ```typescript
- * import * as Sentry from '@nodelogger/core';
+ * import * as Sentry from '@johnboxcodes/boxlogger';
  *
- * // Initialize with SQLite storage
- * await Sentry.init('sqlite', { filename: './logs.db' });
+ * // Initialize with Console storage
+ * await Sentry.init('console', { service: 'my-app' });
  *
  * // 1. captureException - The Error Workhorse
  * try {
