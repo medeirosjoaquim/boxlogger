@@ -239,6 +239,49 @@ const stats = await Sentry.getStats();
 | `beforeSend` | `function` | - | Hook to modify/filter events |
 | `beforeSendMessage` | `function` | - | Hook to modify/filter messages |
 
+## Next.js Integration
+
+Perfect for development! Use boxlogger locally and Sentry in production with the same API.
+
+### Development + Production Setup
+
+```typescript
+// sentry.server.config.ts
+import * as Sentry from '@sentry/nextjs';
+
+if (process.env.NODE_ENV === 'development') {
+  // Development: Use boxlogger with colorful console output
+  const boxlogger = await import('@johnboxcodes/boxlogger');
+  await boxlogger.init('console', {
+    service: 'my-app',
+    environment: 'development',
+    minLevel: 'debug',
+  });
+  Object.assign(Sentry, boxlogger);
+} else {
+  // Production: Use real Sentry
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    tracesSampleRate: 0.1,
+  });
+}
+```
+
+### Benefits
+
+**Development:**
+- Beautiful colorful console output
+- No Sentry quota usage
+- Works offline
+- Instant feedback
+
+**Production:**
+- Full Sentry features (alerts, dashboards, replays)
+- Error aggregation and monitoring
+- Same API - just change `NODE_ENV`!
+
+See [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) for complete setup including Edge runtime and client components.
+
 ## Examples
 
 See the [examples](./examples) directory for complete examples:
@@ -246,26 +289,6 @@ See the [examples](./examples) directory for complete examples:
 - [examples/server.ts](./examples/server.ts) - Express server with error tracking
 - [examples/console-demo.ts](./examples/console-demo.ts) - Console provider with colorful output
 - [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) - Next.js integration (server + client)
-
-## Next.js Integration
-
-The console and memory providers work in both Next.js server and client components!
-
-```typescript
-// Client component
-'use client';
-import * as Sentry from '@johnboxcodes/boxlogger';
-
-// Works in the browser!
-await Sentry.init('console', {
-  service: 'my-nextjs-app',
-  environment: 'development'
-});
-
-Sentry.captureException(error);
-```
-
-See [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) for complete examples.
 
 ## License
 

@@ -1,28 +1,121 @@
 /**
  * Next.js Integration Example
  * 
- * This example shows how to use boxlogger in Next.js applications.
- * The console provider works in both server and client components!
+ * This example shows how to use boxlogger in development and Sentry in production.
+ * In development, logs go to console with colorful output.
+ * In production, errors are sent to Sentry for monitoring.
  */
 
 // ============================================================================
-// Server-side usage (API routes, Server Components, Server Actions)
+// Conditional Initialization Helper
 // ============================================================================
 
 // lib/logger.ts
-import * as Sentry from '@johnboxcodes/boxlogger';
+const isDevelopment = process.env.NODE_ENV === 'development';
 
-// Initialize once (in a server-only file)
-await Sentry.init('console', {
-  service: 'my-nextjs-app',
-  environment: process.env.NODE_ENV,
-  minLevel: 'debug',
-});
-
-export { Sentry };
+if (isDevelopment) {
+  // Development: Use boxlogger with console output
+  const boxlogger = await import('@johnboxcodes/boxlogger');
+  
+  await boxlogger.init('console', {
+    service: 'my-nextjs-app',
+    environment: 'development',
+    minLevel: 'debug',
+  });
+  
+  // Re-export as Sentry for consistent API
+  export * as Sentry from '@johnboxcodes/boxlogger';
+} else {
+  // Production: Use real Sentry
+  export * as Sentry from '@sentry/nextjs';
+}
 
 // ============================================================================
-// API Route Example
+// Server Configuration (sentry.server.config.ts)
+// ============================================================================
+
+import * as Sentry from '@sentry/nextjs';
+
+if (process.env.NODE_ENV === 'development') {
+  // Development: Use boxlogger
+  const boxlogger = await import('@johnboxcodes/boxlogger');
+  await boxlogger.init('console', {
+    service: 'my-nextjs-app-server',
+    environment: 'development',
+    minLevel: 'debug',
+  });
+  
+  // Monkey-patch Sentry methods to use boxlogger
+  Object.assign(Sentry, boxlogger);
+} else {
+  // Production: Use real Sentry
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1,
+    enableLogs: true,
+  });
+}
+
+// ============================================================================
+// Edge Configuration (sentry.edge.config.ts)
+// ============================================================================
+
+import * as Sentry from '@sentry/nextjs';
+
+if (process.env.NODE_ENV === 'development') {
+  // Development: Use boxlogger (works in Edge runtime!)
+  const boxlogger = await import('@johnboxcodes/boxlogger');
+  await boxlogger.init('console', {
+    service: 'my-nextjs-app-edge',
+    environment: 'development',
+    minLevel: 'info',
+  });
+  
+  Object.assign(Sentry, boxlogger);
+} else {
+  // Production: Use real Sentry
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1,
+  });
+}
+
+// ============================================================================
+// Client Configuration (instrumentation-client.ts)
+// ============================================================================
+
+'use client';
+import * as Sentry from '@sentry/nextjs';
+
+if (process.env.NODE_ENV === 'development') {
+  // Development: Use boxlogger in browser
+  const boxlogger = await import('@johnboxcodes/boxlogger');
+  await boxlogger.init('console', {
+    service: 'my-nextjs-app-client',
+    environment: 'development',
+    minLevel: 'error',
+  });
+  
+  Object.assign(Sentry, boxlogger);
+} else {
+  // Production: Use real Sentry
+  Sentry.init({
+    dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 0.1,
+    replaysSessionSampleRate: 0.1,
+    replaysOnErrorSampleRate: 1.0,
+    enableLogs: true,
+    integrations: [
+      Sentry.replayIntegration(),
+    ],
+  });
+}
+
+// ============================================================================
+// Usage in Your App (same API everywhere!)
 // ============================================================================
 
 // app/api/users/route.ts
@@ -30,12 +123,10 @@ import { Sentry } from '@/lib/logger';
 
 export async function GET() {
   try {
-    Sentry.info('Fetching users');
-    
     const users = await fetchUsers();
-    
     return Response.json({ users });
   } catch (error) {
+    // Works with both boxlogger (dev) and Sentry (prod)
     Sentry.captureException(error, {
       tags: { endpoint: '/api/users' },
       extra: { method: 'GET' },
@@ -49,123 +140,21 @@ export async function GET() {
 }
 
 // ============================================================================
-// Server Action Example
-// ============================================================================
-
-// app/actions.ts
-'use server';
-
-import { Sentry } from '@/lib/logger';
-
-export async function createUser(formData: FormData) {
-  try {
-    const name = formData.get('name');
-    
-    Sentry.info('Creating user', { extra: { name } });
-    
-    // Create user logic...
-    
-    return { success: true };
-  } catch (error) {
-    Sentry.captureException(error, {
-      tags: { action: 'createUser' },
-    });
-    
-    return { success: false, error: 'Failed to create user' };
-  }
-}
-
-// ============================================================================
-// Client Component Example (Browser-safe!)
-// ============================================================================
-
-// app/components/ErrorBoundary.tsx
-'use client';
-
-import { useEffect } from 'react';
-import * as Sentry from '@johnboxcodes/boxlogger';
-
-// Initialize for client-side (console provider only)
-if (typeof window !== 'undefined') {
-  Sentry.init('console', {
-    service: 'my-nextjs-app-client',
-    environment: process.env.NODE_ENV,
-    minLevel: 'error',
-  }).catch(console.error);
-}
-
-export function ErrorBoundary({ children }: { children: React.ReactNode }) {
-  useEffect(() => {
-    const handleError = (event: ErrorEvent) => {
-      Sentry.captureException(event.error, {
-        tags: { source: 'window.onerror' },
-      });
-    };
-
-    window.addEventListener('error', handleError);
-    return () => window.removeEventListener('error', handleError);
-  }, []);
-
-  return <>{children}</>;
-}
-
-// ============================================================================
-// Client Component with Error Handling
-// ============================================================================
-
-// app/components/UserForm.tsx
-'use client';
-
-import { useState } from 'react';
-import * as Sentry from '@johnboxcodes/boxlogger';
-
-export function UserForm() {
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const response = await fetch('/api/users', {
-        method: 'POST',
-        body: JSON.stringify({ name: 'John' }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create user');
-      }
-
-      Sentry.info('User created successfully');
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'UserForm' },
-      });
-      
-      setError('Something went wrong');
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit}>
-      {error && <div className="error">{error}</div>}
-      <button type="submit">Create User</button>
-    </form>
-  );
-}
-
-// ============================================================================
-// Notes
+// Benefits
 // ============================================================================
 
 /**
- * IMPORTANT:
+ * Development:
+ * - Beautiful colorful console output
+ * - No Sentry quota usage
+ * - Instant feedback
+ * - Works offline
  * 
- * 1. Console provider works everywhere (server + client)
- * 2. SQLite provider only works server-side (requires Node.js)
- * 3. Memory provider works everywhere but doesn't persist
+ * Production:
+ * - Full Sentry features (alerts, dashboards, replays)
+ * - Error aggregation
+ * - Performance monitoring
+ * - User feedback
  * 
- * For production:
- * - Use SQLite on server-side for persistent logs
- * - Use console on client-side for debugging
- * - Consider separate init() calls for server vs client
+ * Same API everywhere - just change NODE_ENV!
  */
