@@ -21,10 +21,6 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./sqlite": {
-      "import": "./dist/stores/sqlite.js",
-      "types": "./dist/stores/sqlite.d.ts"
-    },
     "./memory": {
       "import": "./dist/stores/memory.js",
       "types": "./dist/stores/memory.d.ts"
@@ -55,12 +51,10 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run test"
   },
-  "dependencies": {
-    "better-sqlite3": "^11.7.0"
-  },
+  "peerDependencies": {},
+  "peerDependenciesMeta": {},
   "devDependencies": {
     "@sentry/node": "^10.38.0",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.10.0",
     "jest": "^30.2.0",

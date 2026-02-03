@@ -75,7 +75,6 @@ function randomUUID(): string {
 
 import { Logger, createLogger } from './logger.js';
 import { MemoryStoreProvider } from './stores/memory.js';
-import { SQLiteStoreProvider, type SQLiteStoreConfig } from './stores/sqlite.js';
 import { ConsoleStoreProvider } from './stores/console.js';
 import {
   Scope,
@@ -132,14 +131,12 @@ let _activeTransaction: Transaction | null = null;
 /**
  * Provider type for quick initialization
  */
-export type ProviderType = 'sqlite' | 'memory' | 'console';
+export type ProviderType = 'memory' | 'console';
 
 /**
  * Initialization options
  */
 export interface InitOptions {
-  /** SQLite database filename (for sqlite provider) */
-  filename?: string;
   /** Service/application name */
   service?: string;
   /** Environment (production, staging, development) */
@@ -169,14 +166,11 @@ export interface InitOptions {
 /**
  * Initialize the global logger singleton
  *
- * @param provider - Storage provider type ('sqlite', 'memory', 'console')
+ * @param provider - Storage provider type ('memory', 'console')
  * @param options - Configuration options
  *
  * @example
  * ```typescript
- * // SQLite (persistent)
- * await init('sqlite', { filename: './logs.db' });
- *
  * // Memory (development/testing)
  * await init('memory');
  *
@@ -198,12 +192,6 @@ export async function init(
 
   // Create store based on provider type
   switch (provider) {
-    case 'sqlite':
-      _store = new SQLiteStoreProvider({
-        filename: options.filename ?? ':memory:',
-      });
-      break;
-
     case 'console':
       _store = new ConsoleStoreProvider();
       break;
@@ -259,12 +247,6 @@ export async function create(
   let store: StoreProvider;
 
   switch (provider) {
-    case 'sqlite':
-      store = new SQLiteStoreProvider({
-        filename: options.filename ?? ':memory:',
-      });
-      break;
-
     case 'console':
       store = new ConsoleStoreProvider();
       break;
@@ -1337,7 +1319,7 @@ export { Scope } from './scope.js';
 
 // Store providers
 export { MemoryStoreProvider, type MemoryStoreConfig } from './stores/memory.js';
-export { SQLiteStoreProvider, type SQLiteStoreConfig } from './stores/sqlite.js';
+export { ConsoleStoreProvider, type ConsoleStoreConfig } from './stores/console.js';
 export { BaseStoreProvider } from './stores/base.js';
 
 // Scope utilities

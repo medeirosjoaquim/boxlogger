@@ -912,4 +912,21 @@ describe('BaseStoreProvider', () => {
       })).rejects.toThrow('test store is not initialized');
     });
   });
+
+  describe('UUID Generation', () => {
+    it('should use fallback UUID when crypto.randomUUID is unavailable', () => {
+      const originalCrypto = global.crypto;
+      
+      // Mock crypto without randomUUID
+      (global as any).crypto = {};
+
+      const store = new TestStoreProvider();
+      const id = store.generateId();
+      
+      // Should be a valid UUID format
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
+      global.crypto = originalCrypto;
+    });
+  });
 });

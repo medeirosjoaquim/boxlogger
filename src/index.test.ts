@@ -34,12 +34,6 @@ describe('Index Module - Full Coverage', () => {
       expect(Sentry.isInitialized()).toBe(true);
     });
 
-    it('should initialize with sqlite provider', async () => {
-      // SQLite uses in-memory by default, should work with native module
-      await Sentry.init('sqlite');
-      expect(Sentry.isInitialized()).toBe(true);
-    });
-
     it('should log debug message when debug option is true', async () => {
       // Store original console.log
       const originalLog = console.log;
@@ -119,10 +113,15 @@ describe('Index Module - Full Coverage', () => {
       await logger.close();
     });
 
-    it('should create with sqlite provider', async () => {
-      const logger = await Sentry.create('sqlite');
+    it('should use development environment when process.env is unavailable', async () => {
+      const originalProcess = global.process;
+      (global as any).process = undefined;
+
+      const logger = await Sentry.create('memory');
       expect(logger).toBeDefined();
       await logger.close();
+
+      global.process = originalProcess;
     });
 
     it('should create with all options', async () => {

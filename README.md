@@ -4,14 +4,13 @@ A lightweight, Sentry-compatible backend logger with pluggable storage providers
 
 ## Features
 
-- **Pluggable Storage** - SQLite, Memory, Console, or custom providers
+- **Pluggable Storage** - Memory, Console, or custom providers
 - **Sentry-Compatible API** - Drop-in replacement for common Sentry functions
 - **Browser Compatible** - Console and Memory providers work in Next.js client components
 - **Session Tracking** - Track user sessions with crash detection
 - **Transaction Support** - Performance monitoring with custom measurements
 - **Breadcrumbs** - Event trail for debugging
 - **Scoped Context** - Isolated logging contexts with tags and metadata
-- **Persistent Storage** - SQLite backend for production use
 - **Fully Tested** - Comprehensive test coverage
 
 ## Installation
@@ -20,21 +19,17 @@ A lightweight, Sentry-compatible backend logger with pluggable storage providers
 npm install @johnboxcodes/boxlogger
 ```
 
-For SQLite support:
-```bash
-npm install @johnboxcodes/boxlogger better-sqlite3
-```
+No additional dependencies required!
 
 ## Quick Start
 
 ```typescript
 import * as Sentry from '@johnboxcodes/boxlogger';
 
-// Initialize with SQLite
-await Sentry.init('sqlite', { 
-  filename: './logs.db',
+// Initialize with Console (great for development!)
+await Sentry.init('console', { 
   service: 'my-api',
-  environment: 'production'
+  environment: 'development'
 });
 
 // Capture errors
@@ -63,19 +58,6 @@ Sentry.addBreadcrumb({
 
 ## Storage Providers
 
-### SQLite (Recommended for Production)
-
-```typescript
-import * as Sentry from '@johnboxcodes/boxlogger';
-
-await Sentry.init('sqlite', {
-  filename: './logs.db',
-  service: 'my-service',
-  environment: 'production',
-  minLevel: 'info'
-});
-```
-
 ### Console (Development/Debugging)
 
 Logs everything to console with beautiful colorful formatting. Perfect for development and debugging.
@@ -85,6 +67,18 @@ await Sentry.init('console', {
   service: 'my-service',
   environment: 'development',
   minLevel: 'debug'
+});
+```
+
+
+```typescript
+import * as Sentry from '@johnboxcodes/boxlogger';
+
+await Sentry.init('sqlite', {
+  filename: './logs.db',
+  service: 'my-service',
+  environment: 'production',
+  minLevel: 'info'
 });
 ```
 
@@ -250,6 +244,7 @@ const stats = await Sentry.getStats();
 ## Examples
 
 See the [examples](./examples) directory for complete examples:
+- [examples/simple.js](./examples/simple.js) - Quick start example (run with `node examples/simple.js`)
 - [examples/server.ts](./examples/server.ts) - Express server with error tracking
 - [examples/console-demo.ts](./examples/console-demo.ts) - Console provider with colorful output
 - [examples/nextjs-integration.tsx](./examples/nextjs-integration.tsx) - Next.js integration (server + client)

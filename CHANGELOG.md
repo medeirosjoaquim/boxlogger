@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Console storage provider** with colorful output for debugging
-- **Browser compatibility** - Console and Memory providers now work in browser environments
+- **Browser compatibility** - Console and Memory providers work in browser environments
 - Next.js client component support
-- Browser-compatible UUID generation (no node:crypto dependency)
+- Browser-compatible UUID generation
 - Next.js integration example with server and client usage
 - Graceful handling of null/undefined in captureException
 
@@ -20,12 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made `process` access safe for browser environments
 - `pid` field is now optional (undefined in browser)
 
+### Removed
+- **SQLite provider removed** - Simplified to console and memory providers only
+- No native dependencies required
+- Smaller bundle size
+- Works everywhere (Node.js, Edge runtime, browsers)
+
 ## [0.1.0] - 2026-02-02
 
 ### Added
 - Initial release
 - Sentry-compatible API with top 5 functions (captureException, captureMessage, setUser, addBreadcrumb, withScope)
-- SQLite storage provider with persistent logging
 - Memory storage provider for development/testing
 - **Console storage provider with colorful output for debugging**
 - Session tracking with crash detection
