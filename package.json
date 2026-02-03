@@ -1,6 +1,6 @@
 {
   "name": "@johnboxcodes/boxlogger",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Lightweight, Sentry-compatible backend logger with pluggable storage providers (SQLite, Memory) for Node.js",
   "author": "johnbox codes",
   "license": "MIT",
