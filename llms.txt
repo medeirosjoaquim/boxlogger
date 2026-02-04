@@ -1,0 +1,52 @@
+# boxlogger
+
+> A lightweight, Sentry-compatible backend logger with pluggable storage providers for Node.js applications.
+
+boxlogger provides a drop-in replacement for Sentry with zero dependencies. Perfect for development environments with beautiful console output, or production with custom storage backends. Supports error tracking, breadcrumbs, sessions, transactions, and performance monitoring with the same API as Sentry.
+
+## Getting Started
+
+- [README](https://github.com/johnboxcodes/boxlogger#readme): Complete project overview and quick start guide.
+- [Installation](https://github.com/johnboxcodes/boxlogger#installation): Install boxlogger via npm.
+- [Quick Start](https://github.com/johnboxcodes/boxlogger#quick-start): Initialize and start logging in under 5 minutes.
+
+## Core Features
+
+- [Storage Providers](https://github.com/johnboxcodes/boxlogger#storage-providers): Console, Memory, and custom provider support.
+- [Sentry Compatibility](https://github.com/johnboxcodes/boxlogger#features): Drop-in replacement for common Sentry functions.
+- [Browser Support](https://github.com/johnboxcodes/boxlogger#features): Works in Next.js client components with Console and Memory providers.
+- [Session Tracking](https://github.com/johnboxcodes/boxlogger#session-management): Track user sessions with crash detection.
+- [Transaction Support](https://github.com/johnboxcodes/boxlogger#transaction-tracking): Performance monitoring with custom measurements.
+- [Breadcrumbs](https://github.com/johnboxcodes/boxlogger#api-reference): Event trail for debugging context.
+
+## API Reference
+
+- [init()](https://github.com/johnboxcodes/boxlogger#initprovider-options): Initialize the logger with a storage provider.
+- [captureException()](https://github.com/johnboxcodes/boxlogger#captureexceptionerror-context): Capture and log exceptions with optional context.
+- [captureMessage()](https://github.com/johnboxcodes/boxlogger#capturemessagemessage-level): Log custom messages with severity levels.
+- [setUser()](https://github.com/johnboxcodes/boxlogger#setuseruser): Set user context for all subsequent logs.
+- [addBreadcrumb()](https://github.com/johnboxcodes/boxlogger#addbreadcrumbbreadcrumb): Add breadcrumb for event trail.
+- [withScope()](https://github.com/johnboxcodes/boxlogger#withscopecallback): Execute code with isolated logging context.
+- [startTransaction()](https://github.com/johnboxcodes/boxlogger#transaction-tracking): Start performance transaction tracking.
+- [startSession()](https://github.com/johnboxcodes/boxlogger#session-management): Begin user session tracking.
+
+## Configuration
+
+- [Configuration Options](https://github.com/johnboxcodes/boxlogger#configuration-options): Complete list of logger configuration options.
+- [Console Provider](https://github.com/johnboxcodes/boxlogger#console-developmentdebugging): Colorful console output for development.
+- [Memory Provider](https://github.com/johnboxcodes/boxlogger#memory-testing): In-memory storage for testing.
+- [Custom Provider](https://github.com/johnboxcodes/boxlogger#custom-provider): Create your own storage backend.
+
+## Integration Guides
+
+- [Next.js Integration](https://github.com/johnboxcodes/boxlogger#nextjs-integration): Use boxlogger in development, Sentry in production.
+- [Express Server Example](https://github.com/johnboxcodes/boxlogger/blob/main/examples/server.ts): Complete Express.js integration example.
+- [Simple Example](https://github.com/johnboxcodes/boxlogger/blob/main/examples/simple.js): Basic usage example in plain JavaScript.
+- [Console Demo](https://github.com/johnboxcodes/boxlogger/blob/main/examples/console-demo.ts): Showcase of colorful console output.
+
+## Optional
+
+- [CHANGELOG](https://github.com/johnboxcodes/boxlogger/blob/main/CHANGELOG.md): Version history and release notes.
+- [License](https://github.com/johnboxcodes/boxlogger#license): MIT License information.
+- [GitHub Repository](https://github.com/johnboxcodes/boxlogger): Source code and issue tracker.
+- [npm Package](https://www.npmjs.com/package/@johnboxcodes/boxlogger): Published package on npm registry.
