@@ -84,10 +84,18 @@ import {
   configureScope,
   withScope as withScopeInternal,
   withScopeAsync,
+  withIsolationScope as withIsolationScopeInternal,
+  withIsolationScopeAsync,
+  addGlobalEventProcessor,
+  getGlobalEventProcessors,
   resetScopes,
   type Breadcrumb as ScopeBreadcrumb,
   type CaptureContext as ScopeCaptureContext,
   type SeverityLevel,
+  type EventProcessor,
+  type EventHint,
+  type Attachment,
+  type PropagationContext,
 } from './scope.js';
 import type {
   LogLevel,
@@ -124,9 +132,16 @@ let _store: StoreProvider | null = null;
 let _beforeSend: BeforeSendHook | null = null;
 let _beforeSendMessage: BeforeSendMessageHook | null = null;
 let _ignoreErrors: (string | RegExp)[] = [];
+let _denyUrls: (string | RegExp)[] = [];
+let _allowUrls: (string | RegExp)[] = [];
 let _sampleRate: number = 1.0;
 let _messagesSampleRate: number = 1.0;
+let _tracesSampleRate: number = 0;
 let _activeTransaction: Transaction | null = null;
+let _lastEventId: string = '';
+let _dsn: string | undefined;
+let _integrations: SentryIntegration[] = [];
+let _initOptions: InitOptions = {};
 
 /**
  * Provider type for quick initialization
@@ -134,33 +149,100 @@ let _activeTransaction: Transaction | null = null;
 export type ProviderType = 'memory' | 'console';
 
 /**
- * Initialization options
+ * Sentry-style integration descriptor (boxlogger accepts these to keep
+ * call signatures compatible — most are no-ops since we do not perform
+ * any auto-instrumentation).
+ */
+export interface SentryIntegration {
+  name: string;
+  setupOnce?: () => void;
+  setup?: (client?: unknown) => void;
+  afterAllSetup?: (client?: unknown) => void;
+  processEvent?: EventProcessor;
+}
+
+/**
+ * Initialization options.
+ *
+ * @remarks
+ * Accepts the full `@sentry/node` init shape so that existing Sentry code
+ * compiles and runs against boxlogger. Options that don't make sense for a
+ * local in-memory/console logger (DSN, transports, instrumentations, etc.)
+ * are stored but otherwise ignored.
  */
 export interface InitOptions {
-  /** Service/application name */
+  // -- boxlogger native --
+  /** Storage provider for boxlogger's local store. */
   service?: string;
-  /** Environment (production, staging, development) */
   environment?: string;
-  /** Release/version string */
   release?: string;
-  /** Minimum log level */
   minLevel?: LogLevel;
-  /** Enable session tracking */
   enableSessions?: boolean;
-  /** Default metadata for all logs */
   defaultMetadata?: LogMetadata;
-  /** Debug mode - logs SDK internals */
   debug?: boolean;
-  /** Patterns to match error messages that should be ignored. Strings or RegExp. */
   ignoreErrors?: (string | RegExp)[];
-  /** Sample rate for error events (0.0 to 1.0). Default 1.0 (100%). */
   sampleRate?: number;
-  /** Sample rate for message events (0.0 to 1.0). Default 1.0 (100%). */
   messagesSampleRate?: number;
-  /** Called before sending exception event. Return null to drop the event. */
   beforeSend?: BeforeSendHook;
-  /** Called before sending message event. Return null to drop the event. */
   beforeSendMessage?: BeforeSendMessageHook;
+
+  // -- Sentry-compatible (accepted; mostly no-op locally) --
+  /** Sentry DSN. Accepted for API compatibility; events are not transported. */
+  dsn?: string;
+  /** Tunnel URL. Accepted for compatibility. */
+  tunnel?: string;
+  /** Sentry-style integrations. Their setup/afterAllSetup hooks are invoked. */
+  integrations?: SentryIntegration[] | ((defaults: SentryIntegration[]) => SentryIntegration[]);
+  /** Sample rate for traces (0.0 to 1.0). */
+  tracesSampleRate?: number;
+  /** Custom traces sampler. Accepted for compatibility. */
+  tracesSampler?: (ctx: unknown) => number | boolean;
+  /** Sample rate for profiling (accepted for compatibility). */
+  profilesSampleRate?: number;
+  /** URL deny-list for events. */
+  denyUrls?: (string | RegExp)[];
+  /** URL allow-list for events. */
+  allowUrls?: (string | RegExp)[];
+  /** Maximum breadcrumb count. */
+  maxBreadcrumbs?: number;
+  /** Attach a stack trace to messages. Accepted for compatibility. */
+  attachStacktrace?: boolean;
+  /** Auto session tracking (Sentry release health). */
+  autoSessionTracking?: boolean;
+  /** Initial scope tags/extras/user. */
+  initialScope?: ScopeCaptureContext | ((scope: Scope) => Scope);
+  /** Enable structured logs (Sentry.logger.*). Defaults to true locally. */
+  enableLogs?: boolean;
+  /** Default integrations toggle (no-op locally). */
+  defaultIntegrations?: false | SentryIntegration[];
+  /** Send default PII flag (no-op locally). */
+  sendDefaultPii?: boolean;
+  /** Server name override. */
+  serverName?: string;
+  /** Shutdown timeout in milliseconds. */
+  shutdownTimeout?: number;
+  /** Maximum value length for normalized strings. */
+  maxValueLength?: number;
+  /** Normalize depth for objects. */
+  normalizeDepth?: number;
+  /** Normalize max breadth. */
+  normalizeMaxBreadth?: number;
+  /** Transport factory (no-op locally). */
+  transport?: unknown;
+  /** Transport options (no-op locally). */
+  transportOptions?: unknown;
+  /** beforeSendTransaction hook. */
+  beforeSendTransaction?: (event: unknown, hint?: unknown) => unknown;
+  /** beforeSendSpan hook. */
+  beforeSendSpan?: (span: unknown) => unknown;
+  /** beforeBreadcrumb hook. */
+  beforeBreadcrumb?: (
+    breadcrumb: ScopeBreadcrumb,
+    hint?: Record<string, unknown>
+  ) => ScopeBreadcrumb | null;
+
+  /** Allow forward-compat unknown options without TS errors. */
+  [key: string]: unknown;
 }
 
 /**
@@ -217,17 +299,179 @@ export async function init(
 
   // Store ignoreErrors patterns
   _ignoreErrors = options.ignoreErrors ?? [];
+  _denyUrls = options.denyUrls ?? [];
+  _allowUrls = options.allowUrls ?? [];
 
   // Store sample rates
   _sampleRate = options.sampleRate ?? 1.0;
   _messagesSampleRate = options.messagesSampleRate ?? 1.0;
+  _tracesSampleRate = options.tracesSampleRate ?? 0;
 
   // Store beforeSend hooks
   _beforeSend = options.beforeSend ?? null;
   _beforeSendMessage = options.beforeSendMessage ?? null;
 
+  // Sentry-compatible options
+  _dsn = options.dsn;
+  _initOptions = options;
+  _lastEventId = '';
+
+  // Apply initialScope before integrations run
+  if (options.initialScope) {
+    if (typeof options.initialScope === 'function') {
+      options.initialScope(getGlobalScope());
+    } else {
+      getGlobalScope().applyContext(options.initialScope as ScopeCaptureContext);
+    }
+  }
+
+  // Resolve integrations: default integrations + user integrations, deduped by name.
+  const defaults = options.defaultIntegrations === false
+    ? []
+    : Array.isArray(options.defaultIntegrations)
+    ? options.defaultIntegrations
+    : getDefaultIntegrations(options);
+  const userIntegrations = typeof options.integrations === 'function'
+    ? options.integrations(defaults)
+    : [...defaults, ...(options.integrations ?? [])];
+  _integrations = dedupeIntegrations(userIntegrations);
+
+  // Run integration lifecycle (best-effort, never throws)
+  for (const integration of _integrations) {
+    try {
+      integration.setupOnce?.();
+    } catch (e) {
+      if (options.debug) console.warn('[boxlogger] integration setupOnce failed:', e);
+    }
+  }
+  for (const integration of _integrations) {
+    try {
+      integration.setup?.(getClient());
+    } catch (e) {
+      if (options.debug) console.warn('[boxlogger] integration setup failed:', e);
+    }
+  }
+  for (const integration of _integrations) {
+    try {
+      integration.afterAllSetup?.(getClient());
+    } catch (e) {
+      if (options.debug) console.warn('[boxlogger] integration afterAllSetup failed:', e);
+    }
+    if (integration.processEvent) {
+      addGlobalEventProcessor(integration.processEvent);
+    }
+  }
+
   if (options.debug) {
     console.log('[NodeLogger] Initialized with provider:', provider);
+    if (_dsn) console.log('[NodeLogger] DSN accepted (events are stored locally only):', _dsn);
+  }
+}
+
+function dedupeIntegrations(integrations: SentryIntegration[]): SentryIntegration[] {
+  const seen = new Set<string>();
+  const result: SentryIntegration[] = [];
+  for (const integration of integrations) {
+    if (!seen.has(integration.name)) {
+      seen.add(integration.name);
+      result.push(integration);
+    }
+  }
+  return result;
+}
+
+/**
+ * Default integrations installed at init() time on Node.
+ *
+ * @remarks
+ * Mirrors the integrations Sentry's Node SDK installs automatically so that
+ * `Sentry.init()` "just works" for crash reporting in a server process. Pass
+ * `defaultIntegrations: false` (or your own `integrations` factory) to opt out.
+ */
+export function getDefaultIntegrations(_options: InitOptions = {}): SentryIntegration[] {
+  if (typeof process === 'undefined' || !process?.versions?.node) return [];
+  return [onUncaughtExceptionIntegration(), onUnhandledRejectionIntegration()];
+}
+
+let _uncaughtExceptionListener: ((err: Error) => void) | null = null;
+let _unhandledRejectionListener: ((reason: unknown) => void) | null = null;
+
+/**
+ * Capture errors thrown synchronously and never caught (Sentry-compatible).
+ */
+export function onUncaughtExceptionIntegration(options: {
+  onFatalError?: (err: Error) => void;
+  exitEvenIfOtherHandlersAreRegistered?: boolean;
+} = {}): SentryIntegration {
+  return {
+    name: 'OnUncaughtException',
+    setupOnce() {
+      if (_uncaughtExceptionListener) return;
+      _uncaughtExceptionListener = (err: Error) => {
+        try {
+          captureException(err, {
+            level: 'fatal',
+            tags: { mechanism: 'onuncaughtexception' },
+          });
+        } catch { /* never let our handler throw */ }
+        if (options.onFatalError) {
+          options.onFatalError(err);
+        } else if (options.exitEvenIfOtherHandlersAreRegistered !== false) {
+          // Match Sentry's default: re-emit so Node prints the trace and exits.
+          if (process.listenerCount('uncaughtException') <= 1) {
+            // We're the only listener — preserve default crash behavior.
+            console.error(err);
+            process.exit(1);
+          }
+        }
+      };
+      process.on('uncaughtException', _uncaughtExceptionListener);
+    },
+  };
+}
+
+/**
+ * Capture promise rejections that never get a `.catch` (Sentry-compatible).
+ */
+export function onUnhandledRejectionIntegration(options: {
+  mode?: 'none' | 'warn' | 'strict';
+} = {}): SentryIntegration {
+  return {
+    name: 'OnUnhandledRejection',
+    setupOnce() {
+      if (_unhandledRejectionListener) return;
+      const mode = options.mode ?? 'warn';
+      _unhandledRejectionListener = (reason: unknown) => {
+        try {
+          captureException(reason, {
+            level: 'error',
+            tags: { mechanism: 'onunhandledrejection' },
+          });
+        } catch { /* never let our handler throw */ }
+        if (mode === 'warn') {
+          console.warn('boxlogger captured unhandled rejection:', reason);
+        } else if (mode === 'strict') {
+          process.exit(1);
+        }
+      };
+      process.on('unhandledRejection', _unhandledRejectionListener);
+    },
+  };
+}
+
+/**
+ * Detach process-level listeners installed by the default integrations.
+ * Called automatically from close().
+ */
+function teardownDefaultIntegrations(): void {
+  if (typeof process === 'undefined' || !process?.versions?.node) return;
+  if (_uncaughtExceptionListener) {
+    process.off('uncaughtException', _uncaughtExceptionListener);
+    _uncaughtExceptionListener = null;
+  }
+  if (_unhandledRejectionListener) {
+    process.off('unhandledRejection', _unhandledRejectionListener);
+    _unhandledRejectionListener = null;
   }
 }
 
@@ -274,6 +518,7 @@ export async function create(
  * Close the global logger and release resources
  */
 export async function close(): Promise<void> {
+  teardownDefaultIntegrations();
   if (_instance) {
     await _instance.close();
     _instance = null;
@@ -282,11 +527,19 @@ export async function close(): Promise<void> {
     _store = null;
   }
   _ignoreErrors = [];
+  _denyUrls = [];
+  _allowUrls = [];
   _sampleRate = 1.0;
   _messagesSampleRate = 1.0;
+  _tracesSampleRate = 0;
   _beforeSend = null;
   _beforeSendMessage = null;
   _activeTransaction = null;
+  _lastEventId = '';
+  _dsn = undefined;
+  _integrations = [];
+  _initOptions = {};
+  _activeSpan = null;
   resetScopes();
 }
 
@@ -416,8 +669,19 @@ export function captureException(
     event = result;
   }
 
+  // Run global event processors (Sentry-compatible)
+  const sentryEvent = logEntryToSentryEvent(event);
+  let processed: SentryEvent | null = sentryEvent;
+  for (const processor of getGlobalEventProcessors()) {
+    if (processed === null) return '';
+    const next = processor(processed, { originalException: err });
+    processed = next instanceof Promise ? sentryEvent : (next as SentryEvent | null);
+  }
+  if (processed === null) return '';
+
   // Log the exception using the (possibly modified) event data
   _instance!.exception(err, undefined, event.metadata);
+  _lastEventId = eventId;
 
   return eventId;
 }
@@ -525,10 +789,37 @@ export function captureMessage(
     event = result;
   }
 
+  // Run global event processors (Sentry-compatible)
+  const sentryEvent = logEntryToSentryEvent(event);
+  let processed: SentryEvent | null = sentryEvent;
+  for (const processor of getGlobalEventProcessors()) {
+    if (processed === null) return '';
+    const next = processor(processed, { originalException: undefined, data: { message } });
+    processed = next instanceof Promise ? sentryEvent : (next as SentryEvent | null);
+  }
+  if (processed === null) return '';
+
   // Log the message using the (possibly modified) event data
   _instance!.log(event.level, event.message, event.metadata);
+  _lastEventId = eventId;
 
   return eventId;
+}
+
+/**
+ * Best-effort conversion of a stored LogEntry to a Sentry event shape so
+ * Sentry-style event processors can inspect/mutate the basics.
+ */
+function logEntryToSentryEvent(entry: LogEntry): SentryEvent {
+  return {
+    event_id: entry.id,
+    message: entry.message,
+    level: entry.level === 'warn' ? 'warning' : (entry.level as SeverityLevel),
+    timestamp: new Date(entry.timestamp).getTime() / 1000,
+    tags: entry.metadata?.tags,
+    extra: entry.metadata?.extra,
+    user: entry.metadata?.user,
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -648,18 +939,28 @@ export function setUser(user: UserInfo | null): void {
  * });
  * ```
  */
-export function addBreadcrumb(breadcrumb: Breadcrumb): void {
+export function addBreadcrumb(
+  breadcrumb: Breadcrumb,
+  hint?: Record<string, unknown>
+): void {
   ensureInitialized();
 
   // Add timestamp if not provided (Sentry uses seconds since epoch)
-  const crumb: ScopeBreadcrumb = {
+  let crumb: ScopeBreadcrumb | null = {
     ...breadcrumb,
     timestamp: breadcrumb.timestamp ?? Date.now() / 1000,
   };
 
-  // Add to both global and current scope
+  // Run beforeBreadcrumb hook (Sentry-compatible)
+  if (_initOptions.beforeBreadcrumb) {
+    crumb = _initOptions.beforeBreadcrumb(crumb, hint);
+    if (crumb === null) return;
+  }
+
+  // Add to global, current, and isolation scopes
   getGlobalScope().addBreadcrumb(crumb);
   getCurrentScope().addBreadcrumb(crumb);
+  getIsolationScope().addBreadcrumb(crumb);
 }
 
 // ----------------------------------------------------------------------------
@@ -1031,9 +1332,12 @@ export async function startSession(
   return _instance!.startSession(attributes);
 }
 
-export async function endSession(status?: 'ended' | 'crashed'): Promise<void> {
+export async function endSession(
+  status?: 'ok' | 'exited' | 'crashed' | 'abnormal' | 'ended',
+  abnormalMechanism?: string
+): Promise<void> {
   ensureInitialized();
-  await _instance!.endSession(status);
+  await _instance!.endSession(status, abnormalMechanism);
 }
 
 export function getCurrentSession(): Session | null {
@@ -1310,6 +1614,587 @@ function mergeWithScopeMetadata(metadata?: LogMetadata): LogMetadata {
 }
 
 // ============================================================================
+// Sentry Drop-in Shims
+// ============================================================================
+// The following functions exist purely to make code written against
+// `@sentry/node` keep working when the import is swapped to boxlogger.
+// Anything that requires a real Sentry transport, instrumentation, or
+// envelope is a no-op locally — but the call signature matches.
+
+let _activeSpan: SpanShim | null = null;
+const _DEFAULT_SHUTDOWN_MS = 2000;
+
+/**
+ * Minimal Sentry-compatible client shim.
+ *
+ * @remarks
+ * Exposes the methods most commonly used by integrations and SDK code so
+ * they can run unchanged. There is no real transport — `flush`/`close`
+ * resolve immediately and event capture goes through the same local
+ * pipeline as the rest of boxlogger.
+ */
+export interface SentryClientShim {
+  getDsn(): { publicKey: string; host: string } | undefined;
+  getOptions(): InitOptions;
+  getTransport(): undefined;
+  getIntegrationByName<T extends SentryIntegration = SentryIntegration>(name: string): T | undefined;
+  addIntegration(integration: SentryIntegration): void;
+  captureException(error: unknown, hint?: BeforeSendHint): string;
+  captureMessage(message: string, level?: SeverityLevel): string;
+  captureEvent(event: SentryEvent): string;
+  flush(timeout?: number): Promise<boolean>;
+  close(timeout?: number): Promise<boolean>;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  emit(event: string, ...args: unknown[]): void;
+}
+
+const _clientListeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+function makeClient(): SentryClientShim {
+  return {
+    getDsn() {
+      if (!_dsn) return undefined;
+      const match = /^https?:\/\/([^@]+)@([^/]+)\//.exec(_dsn);
+      if (!match) return undefined;
+      return { publicKey: match[1], host: match[2] };
+    },
+    getOptions() {
+      return _initOptions;
+    },
+    getTransport() {
+      return undefined;
+    },
+    getIntegrationByName(name) {
+      return _integrations.find((i) => i.name === name) as never;
+    },
+    addIntegration(integration) {
+      if (_integrations.some((i) => i.name === integration.name)) return;
+      _integrations.push(integration);
+      try { integration.setupOnce?.(); } catch { /* swallow */ }
+      try { integration.setup?.(this); } catch { /* swallow */ }
+      try { integration.afterAllSetup?.(this); } catch { /* swallow */ }
+      if (integration.processEvent) addGlobalEventProcessor(integration.processEvent);
+    },
+    captureException(error, hint) {
+      return captureException(error, hint as CaptureContext | undefined);
+    },
+    captureMessage(message, level) {
+      return captureMessage(message, level);
+    },
+    captureEvent(event) {
+      return captureEvent(event);
+    },
+    async flush(_timeout) {
+      return true;
+    },
+    async close(_timeout) {
+      await close();
+      return true;
+    },
+    on(event, listener) {
+      const list = _clientListeners.get(event) ?? [];
+      list.push(listener);
+      _clientListeners.set(event, list);
+    },
+    emit(event, ...args) {
+      const list = _clientListeners.get(event);
+      if (!list) return;
+      for (const listener of list) {
+        try { listener(...args); } catch { /* swallow */ }
+      }
+    },
+  };
+}
+
+let _client: SentryClientShim | null = null;
+
+/**
+ * Get the current Sentry client (Sentry-compatible).
+ *
+ * @remarks
+ * Returns a minimal client shim that exposes the methods most often called
+ * by integrations and SDK utilities. Returns undefined before init().
+ */
+export function getClient<T extends SentryClientShim = SentryClientShim>(): T | undefined {
+  if (!_instance) return undefined;
+  if (!_client) _client = makeClient();
+  return _client as T;
+}
+
+/**
+ * Flush pending events (Sentry-compatible).
+ *
+ * @remarks
+ * boxlogger has no network transport, so this resolves immediately with `true`.
+ */
+export async function flush(_timeout?: number): Promise<boolean> {
+  return true;
+}
+
+/**
+ * The event ID of the most recently captured event (Sentry-compatible).
+ */
+export function lastEventId(): string {
+  return _lastEventId;
+}
+
+/**
+ * Register an event processor that runs on every captured event (Sentry-compatible).
+ */
+export function addEventProcessor(processor: EventProcessor): void {
+  addGlobalEventProcessor(processor);
+}
+
+/**
+ * Add an integration after init (Sentry-compatible).
+ *
+ * @remarks
+ * boxlogger does not run real auto-instrumentation. The integration's
+ * lifecycle hooks are invoked and any `processEvent` becomes a global event processor.
+ */
+export function addIntegration(integration: SentryIntegration): void {
+  getClient()?.addIntegration(integration);
+}
+
+/**
+ * Get a registered integration by name (Sentry-compatible).
+ */
+export function getIntegrationByName<T extends SentryIntegration = SentryIntegration>(
+  name: string
+): T | undefined {
+  return _integrations.find((i) => i.name === name) as T | undefined;
+}
+
+// ----------------------------------------------------------------------------
+// Isolation scope (Sentry-compatible)
+// ----------------------------------------------------------------------------
+
+export {
+  withIsolationScopeInternal as withIsolationScope,
+  withIsolationScopeAsync,
+  addGlobalEventProcessor,
+  getGlobalEventProcessors,
+};
+
+export type { EventProcessor, EventHint, Attachment, PropagationContext };
+
+/**
+ * Set the trace propagation context on the current scope (Sentry-compatible).
+ */
+export function setPropagationContext(context: PropagationContext): void {
+  getCurrentScope().setPropagationContext(context);
+  getIsolationScope().setPropagationContext(context);
+}
+
+/**
+ * Get the active trace propagation context (Sentry-compatible).
+ */
+export function getPropagationContext(): PropagationContext | null {
+  return getCurrentScope().getPropagationContext()
+    ?? getIsolationScope().getPropagationContext();
+}
+
+/**
+ * Continue a trace from incoming headers (Sentry-compatible).
+ *
+ * Accepts `sentry-trace` and `baggage` header values and runs the callback
+ * with the propagation context applied.
+ */
+export function continueTrace<T>(
+  options: { sentryTrace?: string; baggage?: string },
+  callback: () => T
+): T {
+  const trace = parseSentryTrace(options.sentryTrace);
+  const dsc = parseBaggage(options.baggage);
+  return withScope(() => {
+    if (trace) {
+      setPropagationContext({ ...trace, dsc });
+    }
+    return callback();
+  });
+}
+
+function parseSentryTrace(header?: string): { traceId: string; spanId: string; sampled?: boolean } | null {
+  if (!header) return null;
+  const match = /^([0-9a-f]{32})-([0-9a-f]{16})(?:-([01]))?$/i.exec(header.trim());
+  if (!match) return null;
+  return {
+    traceId: match[1],
+    spanId: match[2],
+    sampled: match[3] === '1' ? true : match[3] === '0' ? false : undefined,
+  };
+}
+
+function parseBaggage(header?: string): Record<string, string> | undefined {
+  if (!header) return undefined;
+  const out: Record<string, string> = {};
+  for (const part of header.split(',')) {
+    const [k, v] = part.split('=').map((s) => s?.trim());
+    if (k && v && k.startsWith('sentry-')) out[k.slice('sentry-'.length)] = decodeURIComponent(v);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+// ----------------------------------------------------------------------------
+// Span API shims (Sentry-compatible call signatures)
+// ----------------------------------------------------------------------------
+
+/**
+ * Sentry-compatible span shape.
+ *
+ * @remarks
+ * boxlogger does not produce a real span envelope; spans here are
+ * lightweight timing records that integrate with the transaction trace ID.
+ */
+export interface SpanShim {
+  spanContext(): { traceId: string; spanId: string; traceFlags: number };
+  setAttribute(key: string, value: unknown): SpanShim;
+  setAttributes(attrs: Record<string, unknown>): SpanShim;
+  setStatus(status: { code: number; message?: string } | string): SpanShim;
+  updateName(name: string): SpanShim;
+  end(endTimestamp?: number): void;
+  isRecording(): boolean;
+  addEvent(name: string, attrs?: Record<string, unknown>): SpanShim;
+}
+
+interface SpanShimContext {
+  name: string;
+  op?: string;
+  description?: string;
+  attributes?: Record<string, unknown>;
+  startTime?: number;
+  parentSpan?: SpanShim | null;
+  forceTransaction?: boolean;
+}
+
+function makeSpan(ctx: SpanShimContext): SpanShim {
+  const traceId = (_activeSpan?.spanContext().traceId
+    ?? _activeTransaction?.traceId
+    ?? generateHexId(32));
+  const spanId = generateHexId(16);
+  const startTime = ctx.startTime ?? Date.now();
+  let endTime: number | undefined;
+  let name = ctx.name;
+  const attributes: Record<string, unknown> = { ...ctx.attributes };
+  if (ctx.op) attributes['sentry.op'] = ctx.op;
+  if (ctx.description) attributes['sentry.description'] = ctx.description;
+  let status: { code: number; message?: string } | undefined;
+
+  const span: SpanShim = {
+    spanContext: () => ({ traceId, spanId, traceFlags: 1 }),
+    setAttribute(key, value) {
+      attributes[key] = value;
+      return span;
+    },
+    setAttributes(attrs) {
+      Object.assign(attributes, attrs);
+      return span;
+    },
+    setStatus(s) {
+      if (typeof s === 'string') status = { code: s === 'ok' ? 1 : 2, message: s };
+      else status = s;
+      return span;
+    },
+    updateName(n) {
+      name = n;
+      return span;
+    },
+    end(endTimestamp) {
+      if (endTime !== undefined) return;
+      endTime = endTimestamp ?? Date.now();
+      // Best-effort: log span as a debug breadcrumb-like log
+      if (_instance) {
+        _instance.debug(`span.end ${name}`, {
+          traceId,
+          spanId,
+          extra: {
+            durationMs: endTime - startTime,
+            attributes,
+            status,
+          },
+        });
+      }
+    },
+    isRecording: () => endTime === undefined,
+    addEvent(eventName, attrs) {
+      attributes[`event.${eventName}`] = attrs ?? true;
+      return span;
+    },
+  };
+  return span;
+}
+
+/**
+ * Start a span and run a callback (Sentry-compatible).
+ *
+ * The span is automatically finished when the callback returns or throws.
+ * Returns the callback's result.
+ */
+export function startSpan<T>(
+  context: SpanShimContext,
+  callback: (span: SpanShim) => T
+): T {
+  const span = makeSpan(context);
+  const previous = _activeSpan;
+  _activeSpan = span;
+  getCurrentScope().setActiveSpan(span.spanContext());
+  try {
+    const result = callback(span);
+    if (result instanceof Promise) {
+      return result.then(
+        (v) => { span.end(); _activeSpan = previous; return v; },
+        (err) => {
+          span.setStatus({ code: 2, message: 'internal_error' });
+          span.end();
+          _activeSpan = previous;
+          throw err;
+        }
+      ) as T;
+    }
+    span.end();
+    _activeSpan = previous;
+    return result;
+  } catch (err) {
+    span.setStatus({ code: 2, message: 'internal_error' });
+    span.end();
+    _activeSpan = previous;
+    throw err;
+  }
+}
+
+/**
+ * Start a span without making it active (Sentry-compatible).
+ */
+export function startInactiveSpan(context: SpanShimContext): SpanShim {
+  return makeSpan(context);
+}
+
+/**
+ * Start a span and run a callback, but require the caller to call `span.end()` (Sentry-compatible).
+ */
+export function startSpanManual<T>(
+  context: SpanShimContext,
+  callback: (span: SpanShim, finish: () => void) => T
+): T {
+  const span = makeSpan(context);
+  const previous = _activeSpan;
+  _activeSpan = span;
+  const finish = () => {
+    span.end();
+    _activeSpan = previous;
+  };
+  try {
+    return callback(span, finish);
+  } catch (err) {
+    span.setStatus({ code: 2, message: 'internal_error' });
+    finish();
+    throw err;
+  }
+}
+
+/**
+ * Run a callback with the given span as active (Sentry-compatible).
+ */
+export function withActiveSpan<T>(span: SpanShim | null, callback: () => T): T {
+  const previous = _activeSpan;
+  _activeSpan = span;
+  try {
+    return callback();
+  } finally {
+    _activeSpan = previous;
+  }
+}
+
+/**
+ * Get the currently active span (Sentry-compatible).
+ */
+export function getActiveSpan(): SpanShim | null {
+  return _activeSpan;
+}
+
+/**
+ * Get the root span of the current trace (Sentry-compatible).
+ *
+ * boxlogger does not maintain a span tree, so this returns the active span.
+ */
+export function getRootSpan(span?: SpanShim | null): SpanShim | null {
+  return span ?? _activeSpan;
+}
+
+/**
+ * Get trace data suitable for HTTP propagation (Sentry-compatible).
+ */
+export function getTraceData(): { 'sentry-trace'?: string; baggage?: string } {
+  const ctx = getPropagationContext()
+    ?? (_activeSpan
+        ? { traceId: _activeSpan.spanContext().traceId, spanId: _activeSpan.spanContext().spanId }
+        : _activeTransaction
+        ? { traceId: _activeTransaction.traceId, spanId: _activeTransaction.spanId }
+        : null);
+  if (!ctx) return {};
+  const sampled = (ctx as PropagationContext).sampled;
+  const sampledFlag = sampled === true ? '-1' : sampled === false ? '-0' : '';
+  return {
+    'sentry-trace': `${ctx.traceId}-${ctx.spanId}${sampledFlag}`,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Cron / monitoring (Sentry-compatible no-ops)
+// ----------------------------------------------------------------------------
+
+export interface CheckIn {
+  monitorSlug: string;
+  status: 'in_progress' | 'ok' | 'error';
+  checkInId?: string;
+  duration?: number;
+}
+
+/**
+ * Capture a cron check-in (Sentry-compatible).
+ *
+ * @remarks
+ * Stored locally as a debug log; not sent anywhere.
+ */
+export function captureCheckIn(
+  checkIn: CheckIn,
+  monitorConfig?: Record<string, unknown>
+): string {
+  const id = checkIn.checkInId ?? randomUUID();
+  if (_instance) {
+    _instance.debug(`checkin ${checkIn.monitorSlug} ${checkIn.status}`, {
+      tags: { 'monitor.slug': checkIn.monitorSlug, 'monitor.status': checkIn.status },
+      extra: { checkInId: id, monitorConfig, duration: checkIn.duration },
+    });
+  }
+  return id;
+}
+
+/**
+ * Wrap a callback with automatic check-in reporting (Sentry-compatible).
+ */
+export function withMonitor<T>(
+  monitorSlug: string,
+  callback: () => T,
+  monitorConfig?: Record<string, unknown>
+): T {
+  const checkInId = captureCheckIn(
+    { monitorSlug, status: 'in_progress' },
+    monitorConfig
+  );
+  const start = Date.now();
+  const finish = (status: 'ok' | 'error') => {
+    captureCheckIn(
+      { monitorSlug, status, checkInId, duration: (Date.now() - start) / 1000 },
+      monitorConfig
+    );
+  };
+  try {
+    const result = callback();
+    if (result instanceof Promise) {
+      return result.then(
+        (v) => { finish('ok'); return v; },
+        (err) => { finish('error'); throw err; }
+      ) as T;
+    }
+    finish('ok');
+    return result;
+  } catch (err) {
+    finish('error');
+    throw err;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// User feedback (Sentry-compatible no-op)
+// ----------------------------------------------------------------------------
+
+export interface UserFeedback {
+  event_id?: string;
+  name?: string;
+  email?: string;
+  message: string;
+  associatedEventId?: string;
+}
+
+/**
+ * Capture user feedback (Sentry-compatible).
+ *
+ * @remarks
+ * Stored locally as an info log; not sent anywhere.
+ */
+export function captureFeedback(feedback: UserFeedback): string {
+  const id = feedback.event_id ?? randomUUID();
+  if (_instance) {
+    _instance.info(`feedback ${feedback.message}`, {
+      tags: { type: 'feedback' },
+      user: feedback.email || feedback.name
+        ? { email: feedback.email, username: feedback.name }
+        : undefined,
+      extra: {
+        feedbackId: id,
+        associatedEventId: feedback.associatedEventId,
+      },
+    });
+  }
+  return id;
+}
+
+// ----------------------------------------------------------------------------
+// Sentry.logger / Sentry.metrics namespaces (Sentry-compatible call shims)
+// ----------------------------------------------------------------------------
+
+/** Sentry.logger.* namespace — proxies to boxlogger's log methods. */
+export const logger = {
+  trace: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.trace(msg, { extra: attrs }),
+  debug: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.debug(msg, { extra: attrs }),
+  info: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.info(msg, { extra: attrs }),
+  warn: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.warn(msg, { extra: attrs }),
+  error: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.error(msg, { extra: attrs }),
+  fatal: (msg: string, attrs?: Record<string, unknown>) =>
+    _instance?.fatal(msg, { extra: attrs }),
+  fmt: (template: TemplateStringsArray, ...values: unknown[]) => {
+    let out = '';
+    template.forEach((t, i) => { out += t + (i < values.length ? String(values[i]) : ''); });
+    return out;
+  },
+};
+
+/** Sentry.metrics.* namespace — stored locally as debug logs. */
+export const metrics = {
+  increment: (name: string, value = 1, data?: Record<string, unknown>) => {
+    _instance?.debug(`metric.increment ${name}`, {
+      extra: { metric: name, value, type: 'counter', ...data },
+    });
+  },
+  distribution: (name: string, value: number, data?: Record<string, unknown>) => {
+    _instance?.debug(`metric.distribution ${name}`, {
+      extra: { metric: name, value, type: 'distribution', ...data },
+    });
+  },
+  gauge: (name: string, value: number, data?: Record<string, unknown>) => {
+    _instance?.debug(`metric.gauge ${name}`, {
+      extra: { metric: name, value, type: 'gauge', ...data },
+    });
+  },
+  set: (name: string, value: number | string, data?: Record<string, unknown>) => {
+    _instance?.debug(`metric.set ${name}`, {
+      extra: { metric: name, value, type: 'set', ...data },
+    });
+  },
+  timing: (name: string, value: number, unit = 'second', data?: Record<string, unknown>) => {
+    _instance?.debug(`metric.timing ${name}`, {
+      extra: { metric: name, value, unit, type: 'timing', ...data },
+    });
+  },
+};
+
+// ============================================================================
 // Re-exports
 // ============================================================================
 
@@ -1369,6 +2254,37 @@ export default {
   create,
   close,
   isInitialized,
+
+  // Client / lifecycle
+  getClient,
+  flush,
+  lastEventId,
+  addEventProcessor,
+  addIntegration,
+  getIntegrationByName,
+
+  // Trace propagation
+  setPropagationContext,
+  getPropagationContext,
+  continueTrace,
+  getTraceData,
+
+  // Spans
+  startSpan,
+  startInactiveSpan,
+  startSpanManual,
+  withActiveSpan,
+  getActiveSpan,
+  getRootSpan,
+
+  // Cron / monitor / feedback
+  captureCheckIn,
+  withMonitor,
+  captureFeedback,
+
+  // Sub-namespaces
+  logger,
+  metrics,
 
   // Top 5 Sentry Functions
   captureException,
