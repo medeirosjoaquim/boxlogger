@@ -257,6 +257,8 @@ export class Logger {
       id: randomUUID(),
       startedAt: new Date().toISOString(),
       status: 'active',
+      init: true,
+      seq: 0,
       errorCount: 0,
       attributes,
     };
@@ -268,10 +270,21 @@ export class Logger {
   }
 
   /**
-   * End the current session
-   * @param status - Final session status
+   * End the current session.
+   *
+   * @param status - Final session status. Accepts both legacy values
+   *   ('ended' | 'crashed') and Sentry release-health values
+   *   ('ok' | 'exited' | 'crashed' | 'abnormal'). Defaults to 'ended'.
+   *
+   * @remarks
+   * Sentry inputs are normalized to boxlogger's storage values so the existing
+   * query API (`getSessions({ status: 'ended' })`) keeps working: Sentry 'ok'
+   * and 'exited' both map to 'ended'; 'abnormal' is preserved verbatim.
    */
-  async endSession(status: 'ended' | 'crashed' = 'ended'): Promise<void> {
+  async endSession(
+    status: 'ok' | 'exited' | 'crashed' | 'abnormal' | 'ended' = 'ended',
+    abnormalMechanism?: string
+  ): Promise<void> {
     if (!this.currentSession) return;
 
     const endedAt = new Date().toISOString();
@@ -279,17 +292,25 @@ export class Logger {
       new Date(endedAt).getTime() -
       new Date(this.currentSession.startedAt).getTime();
 
-    // Determine final status
-    const finalStatus =
-      status === 'crashed' || this.currentSession.errorCount > 0
+    // Map Sentry release-health values into boxlogger storage values.
+    const normalized: 'ended' | 'crashed' | 'abnormal' =
+      status === 'crashed' ? 'crashed'
+      : status === 'abnormal' ? 'abnormal'
+      // 'ok' | 'exited' | 'ended' all collapse to 'ended'
+      : 'ended';
+
+    // Crashes-by-error count override
+    const finalStatus: 'ended' | 'crashed' | 'abnormal' =
+      normalized === 'ended' && this.currentSession.errorCount > 0
         ? 'crashed'
-        : 'ended';
+        : normalized;
 
     await this.store.updateSession(this.currentSession.id, {
       endedAt,
       duration,
       status: finalStatus,
       errorCount: this.currentSession.errorCount,
+      ...(abnormalMechanism ? { abnormal_mechanism: abnormalMechanism } : {}),
     });
 
     this.currentSession = null;
