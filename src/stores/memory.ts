@@ -286,6 +286,7 @@ export class MemoryStoreProvider extends BaseStoreProvider {
     for (const [id, session] of this.sessions) {
       if (
         session.status !== 'active' &&
+        session.status !== 'ok' &&
         session.endedAt &&
         this.parseTimestamp(session.endedAt).getTime() <= cutoff
       ) {
