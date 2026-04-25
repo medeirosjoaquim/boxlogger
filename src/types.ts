@@ -138,19 +138,38 @@ export interface LogEntry {
 }
 
 /**
- * Session tracking data
+ * Sentry-compatible session status values plus boxlogger legacy values.
+ *
+ * @remarks
+ * Sentry uses 'ok' | 'exited' | 'crashed' | 'abnormal'. boxlogger originally
+ * used 'active' | 'ended' | 'crashed'. Both sets are accepted for back-compat:
+ *   - 'active' is treated as equivalent to 'ok'
+ *   - 'ended'  is treated as equivalent to 'exited'
+ */
+export type SessionStatus = 'ok' | 'exited' | 'crashed' | 'abnormal' | 'active' | 'ended';
+
+/**
+ * Session tracking data (Sentry release-health compatible)
  */
 export interface Session {
   /** Unique session ID */
   id: string;
+  /** Distinct ID (user/device fingerprint, Sentry-compatible). */
+  did?: string;
+  /** Session sequence number (Sentry-compatible). */
+  seq?: number;
   /** Session start time (ISO 8601) */
   startedAt: string;
   /** Session end time (ISO 8601) */
   endedAt?: string;
+  /** Initial timestamp for Sentry release-health envelope. */
+  init?: boolean;
   /** Session status */
-  status: 'active' | 'ended' | 'crashed';
+  status: SessionStatus;
   /** Error count during session */
   errorCount: number;
+  /** Reason for abnormal termination (Sentry-compatible). */
+  abnormal_mechanism?: 'anr_foreground' | 'anr_background' | string;
   /** Session duration in ms */
   duration?: number;
   /** User info */
