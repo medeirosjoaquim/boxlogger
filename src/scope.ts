@@ -7,12 +7,44 @@
  * @packageDocumentation
  */
 
-import type { LogLevel, UserInfo, LogMetadata } from './types.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { LogLevel, UserInfo, LogMetadata, SentryEvent } from './types.js';
 
 /**
  * Sentry-compatible severity level type
  */
 export type SeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
+
+/**
+ * Hint passed to event processors (Sentry-compatible).
+ */
+export interface EventHint {
+  event_id?: string;
+  originalException?: unknown;
+  syntheticException?: Error | null;
+  data?: unknown;
+  attachments?: Attachment[];
+  [key: string]: unknown;
+}
+
+/**
+ * Event processor function (Sentry-compatible).
+ * Return null to drop the event, or a (possibly modified) event/Promise.
+ */
+export type EventProcessor = (
+  event: SentryEvent,
+  hint?: EventHint
+) => SentryEvent | null | PromiseLike<SentryEvent | null>;
+
+/**
+ * Attachment data (Sentry-compatible).
+ */
+export interface Attachment {
+  data: string | Uint8Array;
+  filename: string;
+  contentType?: string;
+  attachmentType?: string;
+}
 
 /**
  * Breadcrumb data structure (Sentry-compatible)
@@ -30,6 +62,17 @@ export interface Breadcrumb {
   timestamp?: number;
   /** Additional data */
   data?: Record<string, unknown>;
+}
+
+/**
+ * Trace propagation context (Sentry-compatible).
+ */
+export interface PropagationContext {
+  traceId: string;
+  spanId: string;
+  parentSpanId?: string;
+  sampled?: boolean;
+  dsc?: Record<string, string>;
 }
 
 /**
@@ -79,6 +122,11 @@ export class Scope {
   private _breadcrumbs: Breadcrumb[] = [];
   private _contexts: Record<string, Record<string, unknown>> = {};
   private _maxBreadcrumbs: number = 100;
+  private _eventProcessors: EventProcessor[] = [];
+  private _attachments: Attachment[] = [];
+  private _propagationContext: PropagationContext | null = null;
+  private _activeSpan: { traceId: string; spanId: string; parentSpanId?: string } | null = null;
+  private _client: unknown = null;
 
   /**
    * Create a new scope, optionally cloning from another
@@ -92,6 +140,13 @@ export class Scope {
       this._fingerprint = scope._fingerprint ? [...scope._fingerprint] : null;
       this._breadcrumbs = [...scope._breadcrumbs];
       this._contexts = JSON.parse(JSON.stringify(scope._contexts));
+      this._eventProcessors = [...scope._eventProcessors];
+      this._attachments = [...scope._attachments];
+      this._propagationContext = scope._propagationContext
+        ? { ...scope._propagationContext }
+        : null;
+      this._activeSpan = scope._activeSpan ? { ...scope._activeSpan } : null;
+      this._client = scope._client;
     }
   }
 
@@ -273,7 +328,107 @@ export class Scope {
     this._fingerprint = null;
     this._breadcrumbs = [];
     this._contexts = {};
+    this._eventProcessors = [];
+    this._attachments = [];
+    this._propagationContext = null;
+    this._activeSpan = null;
     return this;
+  }
+
+  /**
+   * Register an event processor that mutates or drops events on this scope (Sentry-compatible).
+   */
+  addEventProcessor(processor: EventProcessor): this {
+    this._eventProcessors.push(processor);
+    return this;
+  }
+
+  /**
+   * Get all event processors registered on this scope.
+   */
+  getEventProcessors(): EventProcessor[] {
+    return [...this._eventProcessors];
+  }
+
+  /**
+   * Add an attachment that will be sent with the next event (Sentry-compatible).
+   */
+  addAttachment(attachment: Attachment): this {
+    this._attachments.push(attachment);
+    return this;
+  }
+
+  /**
+   * Get all attachments on this scope.
+   */
+  getAttachments(): Attachment[] {
+    return [...this._attachments];
+  }
+
+  /**
+   * Remove all attachments from this scope (Sentry-compatible).
+   */
+  clearAttachments(): this {
+    this._attachments = [];
+    return this;
+  }
+
+  /**
+   * Set the trace propagation context for distributed tracing (Sentry-compatible).
+   */
+  setPropagationContext(context: PropagationContext): this {
+    this._propagationContext = { ...context };
+    return this;
+  }
+
+  /**
+   * Get the trace propagation context.
+   */
+  getPropagationContext(): PropagationContext | null {
+    return this._propagationContext ? { ...this._propagationContext } : null;
+  }
+
+  /**
+   * Track the active span on this scope (used by tracing helpers).
+   */
+  setActiveSpan(span: { traceId: string; spanId: string; parentSpanId?: string } | null): this {
+    this._activeSpan = span ? { ...span } : null;
+    return this;
+  }
+
+  /**
+   * Get the active span on this scope (Sentry-compatible).
+   */
+  getActiveSpan(): { traceId: string; spanId: string; parentSpanId?: string } | null {
+    return this._activeSpan ? { ...this._activeSpan } : null;
+  }
+
+  /**
+   * Associate a client with this scope (Sentry-compatible).
+   */
+  setClient(client: unknown): this {
+    this._client = client;
+    return this;
+  }
+
+  /**
+   * Get the client associated with this scope.
+   */
+  getClient<T = unknown>(): T | null {
+    return (this._client as T) ?? null;
+  }
+
+  /**
+   * Run all registered event processors on the given event.
+   * Returns the (possibly modified) event, or null if any processor drops it.
+   */
+  async applyToEvent(event: SentryEvent, hint?: EventHint): Promise<SentryEvent | null> {
+    let current: SentryEvent | null = event;
+    for (const processor of this._eventProcessors) {
+      if (current === null) return null;
+      current = await Promise.resolve(processor(current, hint));
+    }
+    return current;
   }
 
   /**
@@ -348,34 +503,73 @@ export class Scope {
 // ============================================================================
 
 let _globalScope = new Scope();
-let _currentScope = new Scope();
-const _scopeStack: Scope[] = [];
+let _currentScopeFallback = new Scope();
+let _isolationScopeFallback = new Scope();
+const _globalEventProcessors: EventProcessor[] = [];
 
 /**
- * Get the global scope
+ * AsyncLocalStorage-backed per-async-context scope storage.
+ *
+ * @remarks
+ * Every `withScope` / `withIsolationScope` call runs the callback inside a
+ * fresh ALS frame whose store is the forked scope — so any async work spawned
+ * inside the callback (timers, promises, awaits) sees its own scope without
+ * bleeding into sibling async work.
+ */
+const _currentScopeStorage = new AsyncLocalStorage<Scope>();
+const _isolationScopeStorage = new AsyncLocalStorage<Scope>();
+
+/**
+ * Get the global scope (Sentry-compatible).
  */
 export function getGlobalScope(): Scope {
   return _globalScope;
 }
 
 /**
- * Get the current scope
+ * Get the current scope (Sentry-compatible).
+ *
+ * @remarks
+ * Reads from AsyncLocalStorage on Node so the scope follows async work spawned
+ * inside a `withScope` callback. Falls back to a module-level scope when ALS
+ * isn't available (browser).
  */
 export function getCurrentScope(): Scope {
-  return _currentScope;
+  return _currentScopeStorage?.getStore() ?? _currentScopeFallback;
 }
 
 /**
- * Get the isolation scope (same as current for now)
+ * Get the isolation scope (Sentry-compatible).
+ *
+ * @remarks
+ * In Sentry, the isolation scope is per-async-context (e.g. per-request),
+ * separate from the current scope which is per-frame within that context.
+ * On Node it is backed by AsyncLocalStorage so that HTTP servers can run each
+ * incoming request inside a `withIsolationScope` and have all spawned async
+ * work share that same isolation scope without leaking into other requests.
  */
 export function getIsolationScope(): Scope {
-  return _currentScope;
+  return _isolationScopeStorage?.getStore() ?? _isolationScopeFallback;
 }
 
 /**
- * Configure the global scope (Sentry-compatible)
+ * Register a global event processor (Sentry-compatible).
  *
- * @param callback - Function to configure the scope
+ * Processors run on every event captured through captureException/Message/Event.
+ */
+export function addGlobalEventProcessor(processor: EventProcessor): void {
+  _globalEventProcessors.push(processor);
+}
+
+/**
+ * Get all global event processors.
+ */
+export function getGlobalEventProcessors(): EventProcessor[] {
+  return [..._globalEventProcessors];
+}
+
+/**
+ * Configure the global scope (Sentry-compatible).
  *
  * @example
  * ```typescript
@@ -387,70 +581,61 @@ export function getIsolationScope(): Scope {
  */
 export function configureScope(callback: (scope: Scope) => void): void {
   callback(_globalScope);
-  // Apply global scope to current scope
-  _currentScope = new Scope(_globalScope);
+  // Apply global scope to the fallback current scope so synchronous reads
+  // outside an ALS frame still see configured values.
+  _currentScopeFallback = new Scope(_globalScope);
 }
 
 /**
- * Run code with an isolated scope (Sentry-compatible)
+ * Run code with an isolated current scope (Sentry-compatible).
  *
- * @param callback - Function to run with isolated scope
- * @returns Result of the callback
- *
- * @example
- * ```typescript
- * withScope((scope) => {
- *   scope.setTag('transaction', 'payment');
- *   scope.setExtra('orderId', orderId);
- *   scope.setFingerprint(['payment', orderId]);
- *
- *   try {
- *     await processPayment(orderId);
- *   } catch (error) {
- *     captureException(error);
- *   }
- * });
- * ```
+ * The forked scope is stored in AsyncLocalStorage so any async work spawned
+ * inside the callback inherits the same scope without bleeding into siblings.
  */
 export function withScope<T>(callback: (scope: Scope) => T): T {
-  // Create isolated scope by cloning current
-  const previousScope = _currentScope;
-  _currentScope = new Scope(_currentScope);
-  _scopeStack.push(previousScope);
-
-  try {
-    return callback(_currentScope);
-  } finally {
-    // Restore previous scope
-    _currentScope = _scopeStack.pop() || new Scope(_globalScope);
-  }
+  const forked = new Scope(getCurrentScope());
+  return _currentScopeStorage.run(forked, () => callback(forked));
 }
 
 /**
- * Run async code with an isolated scope
- *
- * @param callback - Async function to run
- * @returns Promise with callback result
+ * Async variant of withScope (Sentry-compatible).
  */
 export async function withScopeAsync<T>(
   callback: (scope: Scope) => Promise<T>
 ): Promise<T> {
-  const previousScope = _currentScope;
-  _currentScope = new Scope(_currentScope);
-  _scopeStack.push(previousScope);
-
-  try {
-    return await callback(_currentScope);
-  } finally {
-    _currentScope = _scopeStack.pop() || new Scope(_globalScope);
-  }
+  const forked = new Scope(getCurrentScope());
+  return _currentScopeStorage.run(forked, () => callback(forked));
 }
 
 /**
- * Reset all scopes (for testing)
+ * Run a callback with a forked isolation scope (Sentry-compatible).
+ *
+ * @remarks
+ * The canonical way to isolate per-request context in HTTP servers: every
+ * request handler should run inside a `withIsolationScope` so its tags,
+ * breadcrumbs, and user context don't leak across concurrent requests.
+ */
+export function withIsolationScope<T>(callback: (scope: Scope) => T): T {
+  const forked = new Scope(getIsolationScope());
+  return _isolationScopeStorage.run(forked, () => callback(forked));
+}
+
+/**
+ * Async variant of withIsolationScope (Sentry-compatible).
+ */
+export async function withIsolationScopeAsync<T>(
+  callback: (scope: Scope) => Promise<T>
+): Promise<T> {
+  const forked = new Scope(getIsolationScope());
+  return _isolationScopeStorage.run(forked, () => callback(forked));
+}
+
+/**
+ * Reset all scopes (for testing).
  */
 export function resetScopes(): void {
   _globalScope = new Scope();
-  _currentScope = new Scope();
-  _scopeStack.length = 0;
+  _currentScopeFallback = new Scope();
+  _isolationScopeFallback = new Scope();
+  _globalEventProcessors.length = 0;
 }

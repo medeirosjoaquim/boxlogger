@@ -647,10 +647,18 @@ describe('Global Scope Management', () => {
   });
 
   describe('getIsolationScope', () => {
-    it('should return the isolation scope (same as current)', () => {
+    it('should return a separate scope from the current scope (Sentry-compatible)', () => {
       const isolationScope = getIsolationScope();
       const currentScope = getCurrentScope();
-      expect(isolationScope).toBe(currentScope);
+      expect(isolationScope).not.toBe(currentScope);
+      expect(isolationScope).toBeInstanceOf(Scope);
+    });
+
+    it('should not bleed tags between isolation and current scopes', () => {
+      getIsolationScope().setTag('isolation', 'value');
+      getCurrentScope().setTag('current', 'value');
+      expect(getIsolationScope().getTags()).toEqual({ isolation: 'value' });
+      expect(getCurrentScope().getTags()).toEqual({ current: 'value' });
     });
   });
 
