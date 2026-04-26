@@ -647,7 +647,8 @@ describe('Sentry drop-in shims', () => {
         beforeBreadcrumb: (crumb) => ({ ...crumb, message: 'rewritten' }),
       });
       Sentry.addBreadcrumb({ category: 'nav', message: 'orig' });
-      const crumbs = Sentry.getCurrentScope().getBreadcrumbs();
+      // Sentry v8+ writes breadcrumbs to the isolation scope.
+      const crumbs = Sentry.getIsolationScope().getBreadcrumbs();
       expect(crumbs[0]?.message).toBe('rewritten');
     });
   });

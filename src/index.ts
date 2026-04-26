@@ -623,10 +623,11 @@ export function captureException(
     return eventId;
   }
 
-  const scope = getCurrentScope();
-
-  // Apply capture context to a temporary scope
-  const tempScope = new Scope(scope);
+  // Merge global → isolation → current scopes (Sentry-compatible).
+  const tempScope = new Scope();
+  tempScope.merge(getGlobalScope());
+  tempScope.merge(getIsolationScope());
+  tempScope.merge(getCurrentScope());
   if (captureContext) {
     tempScope.applyContext(captureContext as ScopeCaptureContext);
   }
@@ -738,7 +739,6 @@ export function captureMessage(
   }
 
   const eventId = randomUUID();
-  const scope = getCurrentScope();
 
   let level: LogLevel = 'info';
   let captureContext: CaptureContext | undefined;
@@ -755,8 +755,11 @@ export function captureMessage(
     }
   }
 
-  // Apply capture context to a temporary scope
-  const tempScope = new Scope(scope);
+  // Merge global → isolation → current scopes (Sentry-compatible).
+  const tempScope = new Scope();
+  tempScope.merge(getGlobalScope());
+  tempScope.merge(getIsolationScope());
+  tempScope.merge(getCurrentScope());
   if (captureContext) {
     tempScope.applyContext(captureContext as ScopeCaptureContext);
   }
@@ -957,9 +960,11 @@ export function addBreadcrumb(
     if (crumb === null) return;
   }
 
-  // Add to global, current, and isolation scopes
-  getGlobalScope().addBreadcrumb(crumb);
-  getCurrentScope().addBreadcrumb(crumb);
+  // Sentry v8+ writes breadcrumbs to the isolation scope — that scope is
+  // per-async-context (ALS-backed) so per-request handlers naturally get
+  // their own breadcrumb trail without leaking across requests. The capture
+  // pipeline merges global → isolation → current so the breadcrumb still
+  // appears on every captured event.
   getIsolationScope().addBreadcrumb(crumb);
 }
 
@@ -1093,11 +1098,11 @@ export function captureEvent(event: SentryEvent): string {
   // Generate event_id if not provided
   const eventId = event.event_id ?? randomUUID();
 
-  // Get current scope
-  const scope = getCurrentScope();
-
-  // Create a temporary scope starting from current scope
-  const tempScope = new Scope(scope);
+  // Merge global → isolation → current scopes (Sentry-compatible).
+  const tempScope = new Scope();
+  tempScope.merge(getGlobalScope());
+  tempScope.merge(getIsolationScope());
+  tempScope.merge(getCurrentScope());
 
   // Apply event data to scope (event data takes precedence over scope)
   if (event.tags) {
@@ -1588,7 +1593,12 @@ export function getActiveTransaction(): Transaction | null {
  * Merge provided metadata with scope metadata and active transaction context
  */
 function mergeWithScopeMetadata(metadata?: LogMetadata): LogMetadata {
-  const scopeMetadata = getCurrentScope().toMetadata();
+  // Merge global → isolation → current to mirror Sentry's scope merge order.
+  const merged = new Scope();
+  merged.merge(getGlobalScope());
+  merged.merge(getIsolationScope());
+  merged.merge(getCurrentScope());
+  const scopeMetadata = merged.toMetadata();
 
   // Start with scope metadata
   const result: LogMetadata = {
