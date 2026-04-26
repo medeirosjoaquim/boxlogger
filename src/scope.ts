@@ -432,6 +432,40 @@ export class Scope {
   }
 
   /**
+   * Merge another scope's data into this one (Sentry-compatible).
+   *
+   * @remarks
+   * Used by the capture pipeline to stitch global → isolation → current scopes
+   * together before building the final event. Per Sentry semantics, later
+   * merges win for scalar fields (level, user, fingerprint), and dictionaries
+   * (tags, extra, contexts) are shallow-merged. Breadcrumbs and event
+   * processors are concatenated, attachments too.
+   */
+  merge(other: Scope): this {
+    Object.assign(this._tags, other._tags);
+    Object.assign(this._extra, other._extra);
+    if (other._user) this._user = { ...other._user };
+    if (other._level) this._level = other._level;
+    if (other._fingerprint) this._fingerprint = [...other._fingerprint];
+    for (const [name, ctx] of Object.entries(other._contexts)) {
+      this._contexts[name] = { ...ctx };
+    }
+    this._breadcrumbs.push(...other._breadcrumbs);
+    while (this._breadcrumbs.length > this._maxBreadcrumbs) {
+      this._breadcrumbs.shift();
+    }
+    this._eventProcessors.push(...other._eventProcessors);
+    this._attachments.push(...other._attachments);
+    if (other._propagationContext) {
+      this._propagationContext = { ...other._propagationContext };
+    }
+    if (other._activeSpan) {
+      this._activeSpan = { ...other._activeSpan };
+    }
+    return this;
+  }
+
+  /**
    * Apply capture context to scope
    * @param captureContext - Context to apply
    */
